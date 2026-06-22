@@ -20,14 +20,15 @@ export async function proxy(request: NextRequest) {
         return request.cookies.getAll()
       },
       setAll(cookiesToSet) {
-        // Write tokens onto both request (for downstream Server Components
-        // in this same request) and response (for the browser).
+        // 1. Mutate the request's cookie jar so downstream Server Components
+        //    (layout guards, getCurrentUser) read the refreshed tokens in the
+        //    same render pass without a round-trip.
         cookiesToSet.forEach(({ name, value }) =>
           request.cookies.set(name, value)
         )
-        response = NextResponse.next({
-          request: { headers: request.headers },
-        })
+        // 2. Rebuild the response forwarding the now-mutated request cookies
+        //    so the browser receives the updated Set-Cookie headers.
+        response = NextResponse.next({ request })
         cookiesToSet.forEach(({ name, value, options }) =>
           response.cookies.set(name, value, options)
         )

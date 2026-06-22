@@ -23,7 +23,10 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
     const supabase = await createClient()
 
     const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user?.email) return null
+    if (authError || !user?.email) {
+      console.log('[v0] getCurrentUser: auth session missing', authError?.message ?? 'no user')
+      return null
+    }
 
     const { data: appUser, error: userError } = await supabase
       .from('app_users')
@@ -31,8 +34,20 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
       .ilike('email', user.email)
       .maybeSingle()
 
-    if (userError || !appUser) return null
-    if (!appUser.active) return null
+    if (userError) {
+      // DB error — do NOT sign out. Return null so the guard shows Access Denied
+      // rather than kicking the user out entirely.
+      console.log('[v0] getCurrentUser: app_users query error (session preserved)', userError.message)
+      return null
+    }
+    if (!appUser) {
+      console.log('[v0] getCurrentUser: no app_users row for', user.email)
+      return null
+    }
+    if (!appUser.active) {
+      console.log('[v0] getCurrentUser: account inactive', user.email)
+      return null
+    }
 
     const { data: perms } = await supabase
       .from('user_permissions')
@@ -48,7 +63,10 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
       active: appUser.active,
       permissions: (perms ?? []).map((p) => p.permission_key),
     }
-  } catch {
+  } catch (e) {
+    // Never sign out on unexpected error — just return null so the guard
+    // can show Access Denied or an error boundary handles it gracefully.
+    console.log('[v0] getCurrentUser: unexpected error (session preserved)', (e as Error).message)
     return null
   }
 })
