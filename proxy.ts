@@ -41,7 +41,11 @@ export async function proxy(request: NextRequest) {
   } = await supabase.auth.getUser()
 
   // Redirect unauthenticated users away from protected routes to /login.
+  // Never redirect POST requests: Server Actions arrive as POSTs to the page URL.
+  // A 307 on a POST would re-POST to /login instead of executing the action,
+  // causing "An unexpected response was received from the server."
   const { pathname } = request.nextUrl
+  const isPost = request.method === 'POST'
   const isProtected =
     pathname.startsWith('/admin') ||
     pathname.startsWith('/booking') ||
@@ -49,7 +53,7 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith('/supplier')
   const isLoginPage = pathname === '/login'
 
-  if (isProtected && !user) {
+  if (isProtected && !user && !isPost) {
     const loginUrl = new URL('/login', request.url)
     loginUrl.searchParams.set('next', pathname)
     return NextResponse.redirect(loginUrl)
