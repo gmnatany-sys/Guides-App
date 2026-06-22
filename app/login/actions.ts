@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/server'
 export async function loginAction(formData: FormData) {
   const email = (formData.get('email') as string).trim().toLowerCase()
   const password = formData.get('password') as string
+  const next = (formData.get('next') as string | null) || '/admin/tours'
 
   if (!email || !password) {
     return { error: 'Email and password are required.' }
@@ -39,7 +40,7 @@ export async function loginAction(formData: FormData) {
     return { error: 'Your account has been deactivated. Contact an administrator.' }
   }
 
-  redirect('/')
+  redirect(next)
 }
 
 export async function logoutAction() {
