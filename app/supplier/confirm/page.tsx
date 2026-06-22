@@ -13,7 +13,6 @@ import {
   supplierMarkNotConfirmed,
   supplierCancelBooking
 } from './actions'
-import { getMyPermissions } from '@/app/actions/permissions'
 import type { Reservation } from '@/lib/types'
 
 type TabStatus = 'WAITING FOR CONFIRMATION' | 'CONFIRMED' | 'NOT CONFIRMED' | 'CANCELLED'
@@ -28,10 +27,6 @@ export default function SupplierConfirmPage() {
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
   const [processingId, setProcessingId] = useState<string | null>(null)
   const [cancelConfirmId, setCancelConfirmId] = useState<string | null>(null)
-  const [myPermissions, setMyPermissions] = useState<string[]>([])
-
-  const canAction = myPermissions.includes('supplier_confirmation_action')
-
   const loadData = async () => {
     setIsLoading(true)
     try {
@@ -48,10 +43,6 @@ export default function SupplierConfirmPage() {
       setIsLoading(false)
     }
   }
-
-  useEffect(() => {
-    getMyPermissions().then(setMyPermissions)
-  }, [])
 
   useEffect(() => {
     loadData()
@@ -374,8 +365,8 @@ export default function SupplierConfirmPage() {
                     <ReservationCard 
                       key={reservation.id} 
                       reservation={reservation} 
-                      showActions={canAction && status === 'WAITING FOR CONFIRMATION'}
-                      showCancelButton={canAction && status === 'CONFIRMED'}
+                      showActions={status === 'WAITING FOR CONFIRMATION'}
+                      showCancelButton={status === 'CONFIRMED'}
                     />
                   ))}
                 </div>

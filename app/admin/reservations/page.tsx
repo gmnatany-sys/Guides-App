@@ -29,7 +29,6 @@ import {
   cancelReservation,
   type ReservationFilters 
 } from './actions'
-import { getMyPermissions } from '@/app/actions/permissions'
 import type { Reservation, Tour } from '@/lib/types'
 
 function StatusBadge({ status }: { status: string }) {
@@ -51,11 +50,6 @@ export default function ReservationsPage() {
   const [tours, setTours] = useState<Tour[]>([])
   const [isPending, startTransition] = useTransition()
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'warning'; text: string } | null>(null)
-  const [myPermissions, setMyPermissions] = useState<string[]>([])
-
-  const canSearch = myPermissions.includes('reservations_search_access')
-  const canAction = myPermissions.includes('reservations_action_access')
-
   // Filters
   const [statusFilter, setStatusFilter] = useState('all')
   const [tourFilter, setTourFilter] = useState('all')
@@ -79,7 +73,6 @@ export default function ReservationsPage() {
   }
 
   useEffect(() => {
-    getMyPermissions().then(setMyPermissions)
     loadData()
   }, [])
 
@@ -259,11 +252,9 @@ export default function ReservationsPage() {
             <div className="space-y-2">
               <Label>Search by docket, voucher, client name, or confirmation number</Label>
               <Input 
-                placeholder={canSearch ? 'Enter search term...' : 'Search not permitted'}
+                placeholder="Enter search term..."
                 value={search} 
                 onChange={(e) => setSearch(e.target.value)}
-                disabled={!canSearch}
-                title={!canSearch ? 'You do not have search access.' : undefined}
               />
             </div>
 
@@ -347,45 +338,41 @@ export default function ReservationsPage() {
                         {res.internal_notes || '-'}
                       </TableCell>
                       <TableCell>
-                        {canAction ? (
-                          <div className="flex gap-1">
-                            {res.status === 'WAITING FOR CONFIRMATION' && (
-                              <>
-                                <Button 
-                                  size="sm" 
-                                  variant="outline"
-                                  className="text-green-600 hover:text-green-700 hover:bg-green-50"
-                                  onClick={() => handleConfirm(res.id)}
-                                  disabled={isPending}
-                                >
-                                  Confirm
-                                </Button>
-                                <Button 
-                                  size="sm" 
-                                  variant="outline"
-                                  className="text-orange-600 hover:text-orange-700 hover:bg-orange-50"
-                                  onClick={() => handleNotConfirmed(res.id)}
-                                  disabled={isPending}
-                                >
-                                  Not Conf
-                                </Button>
-                              </>
-                            )}
-                            {res.status !== 'CANCELLED' && (
+                        <div className="flex gap-1">
+                          {res.status === 'WAITING FOR CONFIRMATION' && (
+                            <>
                               <Button 
                                 size="sm" 
                                 variant="outline"
-                                className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                                onClick={() => handleCancel(res.id)}
+                                className="text-green-600 hover:text-green-700 hover:bg-green-50"
+                                onClick={() => handleConfirm(res.id)}
                                 disabled={isPending}
                               >
-                                Cancel
+                                Confirm
                               </Button>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        )}
+                              <Button 
+                                size="sm" 
+                                variant="outline"
+                                className="text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+                                onClick={() => handleNotConfirmed(res.id)}
+                                disabled={isPending}
+                              >
+                                Not Conf
+                              </Button>
+                            </>
+                          )}
+                          {res.status !== 'CANCELLED' && (
+                            <Button 
+                              size="sm" 
+                              variant="outline"
+                              className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                              onClick={() => handleCancel(res.id)}
+                              disabled={isPending}
+                            >
+                              Cancel
+                            </Button>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))
