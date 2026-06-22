@@ -41,12 +41,17 @@ export async function proxy(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser()
 
-  // Redirect unauthenticated users away from protected routes to /login.
-  // Never redirect POST requests: Server Actions arrive as POSTs to the page URL.
-  // A 307 on a POST would re-POST to /login instead of executing the action,
-  // causing "An unexpected response was received from the server."
   const { pathname } = request.nextUrl
-  const isPost = request.method === 'POST'
+  const isPost    = request.method === 'POST'
+  // RSC prefetch / internal Next.js router requests must never be redirected.
+  // When the proxy redirects a prefetch, Next.js Router caches the redirect and
+  // sends the user to /login on the very next real navigation — even though their
+  // session is perfectly valid. Detect them by their characteristic headers.
+  const isPrefetch =
+    request.headers.get('Next-Router-Prefetch') === '1' ||
+    request.headers.has('Next-Router-State-Tree') ||
+    request.nextUrl.searchParams.has('_rsc')
+
   const isProtected =
     pathname.startsWith('/admin') ||
     pathname.startsWith('/booking') ||
@@ -54,15 +59,16 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith('/supplier')
   const isLoginPage = pathname === '/login'
 
-  if (isProtected && !user && !isPost) {
+  // Never redirect POSTs (Server Actions) or RSC prefetches.
+  if (isProtected && !user && !isPost && !isPrefetch) {
     const loginUrl = new URL('/login', request.url)
     loginUrl.searchParams.set('next', pathname)
     return NextResponse.redirect(loginUrl)
   }
 
-  // If already logged in, don't show /login.
-  if (isLoginPage && user) {
-    return NextResponse.redirect(new URL('/', request.url))
+  // If already logged in, don't show /login — send to /admin/reservations.
+  if (isLoginPage && user && !isPrefetch) {
+    return NextResponse.redirect(new URL('/admin/reservations', request.url))
   }
 
   return response
