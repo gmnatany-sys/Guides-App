@@ -6,7 +6,12 @@ const SUPABASE_URL = normalizeSupabaseUrl(process.env.APP_SUPABASE_URL)
 const SUPABASE_ANON_KEY = process.env.JWT_8!
 
 export async function proxy(request: NextRequest) {
-  let response = NextResponse.next({ request })
+  // Build the initial response first. setAll will mutate this reference so
+  // that refreshed session tokens are written onto the response that actually
+  // reaches the browser.
+  let response = NextResponse.next({
+    request: { headers: request.headers },
+  })
 
   // Refresh the session cookie on every request so it doesn't expire.
   const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -15,10 +20,14 @@ export async function proxy(request: NextRequest) {
         return request.cookies.getAll()
       },
       setAll(cookiesToSet) {
-        cookiesToSet.forEach(({ name, value, options }) =>
+        // Write tokens onto both request (for downstream Server Components
+        // in this same request) and response (for the browser).
+        cookiesToSet.forEach(({ name, value }) =>
           request.cookies.set(name, value)
         )
-        response = NextResponse.next({ request })
+        response = NextResponse.next({
+          request: { headers: request.headers },
+        })
         cookiesToSet.forEach(({ name, value, options }) =>
           response.cookies.set(name, value, options)
         )
