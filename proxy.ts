@@ -2,10 +2,16 @@ import { type NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 import { normalizeSupabaseUrl } from '@/lib/supabase/url'
 
-const SUPABASE_URL = normalizeSupabaseUrl(process.env.APP_SUPABASE_URL)
-const SUPABASE_ANON_KEY = process.env.JWT_8!
+// Do NOT cache env vars as module-level constants.
+// Next.js dev server reloads .env mid-flight (vm:files_synced / Reload env events),
+// and a module constant captured before the reload will hold the old (or undefined)
+// value for subsequent requests — causing getUser() to return null and the proxy
+// to redirect the authenticated user to /login.
+// Reading from process.env inside the function always gets the current value.
 
 export async function proxy(request: NextRequest) {
+  const SUPABASE_URL      = normalizeSupabaseUrl(process.env.APP_SUPABASE_URL)
+  const SUPABASE_ANON_KEY = process.env.JWT_8!
   // Build the initial response first. setAll will mutate this reference so
   // that refreshed session tokens are written onto the response that actually
   // reaches the browser.
