@@ -13,7 +13,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/admin/open-dates',             label: 'Open Dates',                   permissions: ['open_dates_view_access'] },
   { href: '/admin/open-dates/new',         label: 'Availability Calendar',        permissions: ['availability_calendar_manage_access'] },
   { href: '/admin/reservations',           label: 'Reservations',                 permissions: ['reservations_view_access'] },
-  { href: '/admin/minimum-participants',   label: 'Minimum Participants',         permissions: ['reservations_view_access', 'supplier_confirmation_view'] },
+  { href: '/admin/minimum-participants',   label: 'Minimum Participants',         permissions: ['minimum_participants_view_access'] },
   { href: '/admin/email-logs',             label: 'Email Logs',                   permissions: ['email_logs_view_access'] },
   { href: '/admin/diagnostics',            label: 'Diagnostics',                  permissions: ['email_logs_view_access'] },
   { href: '/admin/users',                  label: 'Users',                        permissions: ['users_manage_access'] },

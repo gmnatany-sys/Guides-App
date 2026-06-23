@@ -87,6 +87,13 @@ const PERMISSION_GROUPS = [
     ]
   },
   {
+    section: 'Minimum Participants',
+    permissions: [
+      { key: 'minimum_participants_view_access', label: 'Can view Minimum Participants' },
+      { key: 'minimum_participants_action_access', label: 'Can perform actions in Minimum Participants' },
+    ]
+  },
+  {
     section: 'Tours',
     permissions: [
       { key: 'tours_manage_access', label: 'Can view and perform actions in Tours' },

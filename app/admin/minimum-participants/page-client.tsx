@@ -115,7 +115,7 @@ function getDecisionBadge(decision: string | null) {
   }
 }
 
-export default function MinimumParticipantsPage() {
+export default function MinimumParticipantsPage({ canPerformActions = true }: { canPerformActions?: boolean }) {
   const [alerts, setAlerts] = useState<MinimumParticipantAlert[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isPending, startTransition] = useTransition()
@@ -524,8 +524,8 @@ export default function MinimumParticipantsPage() {
           </div>
         </div>
 
-        {/* Advanced tools: debug/maintenance only, collapsed by default */}
-        <Card>
+        {/* Advanced tools: debug/maintenance only, collapsed by default, hidden for view-only users */}
+        {canPerformActions && <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <div>
@@ -592,7 +592,7 @@ export default function MinimumParticipantsPage() {
               </div>
             </CardContent>
           )}
-        </Card>
+        </Card>}
 
         {/* Message */}
         {message && (
@@ -1041,11 +1041,13 @@ export default function MinimumParticipantsPage() {
                       <TableCell>{getStatusBadge(alert.status)}</TableCell>
                       <TableCell>{getDecisionBadge(alert.supplier_decision)}</TableCell>
                       <TableCell className="text-right">
-                        {/* Requirement G: show Keep/Cancel ONLY when days_left is 0-3,
-                            active participants is 1-3, status is OPEN/NOT CREATED, and
-                            no supplier_decision exists. Never for KEPT/CANCELLED/
-                            RESOLVED or once a decision is recorded. */}
-                        {isLive &&
+                        {/* Requirement G: show Keep/Cancel ONLY when the user has
+                            action access, days_left is 0-3, active participants is
+                            1-3, status is OPEN/NOT CREATED, and no supplier_decision
+                            exists. Never for KEPT/CANCELLED/RESOLVED or once a
+                            decision is recorded. */}
+                        {canPerformActions &&
+                          isLive &&
                           !alert.supplier_decision &&
                           liveDays >= 0 &&
                           liveDays <= 3 &&
@@ -1071,7 +1073,8 @@ export default function MinimumParticipantsPage() {
                         )}
                         {/* A KEPT decision may still be changed to Cancel Tour while the
                             tour date is today/future and the date is not cancelled. */}
-                        {!isLive &&
+                        {canPerformActions &&
+                          !isLive &&
                           alert.status === 'KEPT' &&
                           alert.supplier_decision === 'KEEP_TOUR' &&
                           liveDays >= 0 &&
@@ -1152,7 +1155,7 @@ export default function MinimumParticipantsPage() {
                             : '-'}
                         </TableCell>
                         <TableCell className="text-right">
-                          {alert.status === 'CANCELLED' && (
+                          {canPerformActions && alert.status === 'CANCELLED' && (
                             <Button
                               size="sm"
                               variant="outline"
