@@ -54,7 +54,11 @@ export async function proxy(request: NextRequest) {
   const SUPABASE_URL = normalizeSupabaseUrl(process.env.APP_SUPABASE_URL)
   const SUPABASE_ANON_KEY = process.env.JWT_8!
 
-  let response = NextResponse.next({ request })
+  // Create the pass-through response ONCE and never rebuild it.
+  // Rebuilding (NextResponse.next({ request })) inside setAll was the bug:
+  // it created a brand-new response object that discarded any cookies already
+  // written to the previous response, losing the session on every navigation.
+  const response = NextResponse.next({ request })
 
   const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     cookies: {
@@ -62,24 +66,29 @@ export async function proxy(request: NextRequest) {
         return request.cookies.getAll()
       },
       setAll(cookiesToSet) {
-        // Mutate the request cookie jar so Server Components in the same render
-        // pass see the refreshed tokens.
-        cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
-        // Rebuild the response forwarding the mutated request so the browser
-        // receives updated Set-Cookie headers.
-        response = NextResponse.next({ request })
-        cookiesToSet.forEach(({ name, value, options }) =>
+        // Write refreshed tokens onto BOTH the request (so Server Components in
+        // this render see them) AND the fixed response object (so the browser
+        // receives Set-Cookie headers).  Never reassign `response` here.
+        cookiesToSet.forEach(({ name, value, options }) => {
+          request.cookies.set(name, value)
           response.cookies.set(name, value, options)
-        )
+        })
       },
     },
   })
 
-  // Single getUser() call — refreshes the session token if expired.
-  const { data: { user } } = await supabase.auth.getUser()
+  // getUser() triggers the session refresh and fires onAuthStateChange →
+  // applyServerStorage → setAll above if the token was rotated.
+  const { data: { user }, error: getUserError } = await supabase.auth.getUser()
 
-  const isAuthenticated = !!user
+  const isAuthenticated = !!user && !getUserError
   const isPublic = isPublicPath(pathname)
+
+  console.log(
+    `[proxy] ${pathname} | session=${isAuthenticated ? 'yes' : 'no'}` +
+    (user ? ` user=${user.email}` : '') +
+    ` | redirect=${!isAuthenticated && !isPublic ? 'yes→/login' : 'no'}`
+  )
 
   // Unauthenticated request to a protected route → redirect to /login?next=<path>
   if (!isAuthenticated && !isPublic) {

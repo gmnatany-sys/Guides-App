@@ -22,13 +22,15 @@ export async function createClient() {
         return cookieStore.getAll()
       },
       setAll(cookiesToSet) {
+        // This runs in Server Actions (writable cookie store) and Server Components
+        // (read-only cookie store — the catch is intentional and safe; the proxy
+        // handles refresh in that case via response Set-Cookie headers).
         try {
           cookiesToSet.forEach(({ name, value, options }) =>
-            cookieStore.set(name, value, options),
+            cookieStore.set(name, value, options)
           )
         } catch {
-          // Called from a Server Component — safe to ignore.
-          // The proxy handles session refresh via response cookies.
+          // Read-only context (Server Component render) — safe to ignore.
         }
       },
     },
