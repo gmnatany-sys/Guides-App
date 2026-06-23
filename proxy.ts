@@ -39,16 +39,23 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next()
   }
 
-  // Always pass through RSC prefetch requests — a redirect stored in the
-  // router cache causes spurious redirects on subsequent navigations.
-  const isPrefetch =
-    request.headers.get('Next-Router-Prefetch') === '1' ||
-    request.headers.has('Next-Router-State-Tree') ||
-    request.nextUrl.searchParams.has('_rsc')
-
-  if (isPrefetch) {
-    return NextResponse.next()
-  }
+  // RSC prefetch/navigation requests MUST go through the full auth check.
+  //
+  // Previous bug: the proxy returned NextResponse.next() for all requests
+  // carrying Next-Router-Prefetch or Next-Router-State-Tree headers, bypassing
+  // auth entirely. For an unauthenticated user, the RSC payload for a protected
+  // page (e.g. /admin/users) would be fetched without a session and Next.js
+  // would render the login page as the RSC response. That response got stored
+  // in the router cache. When the user then clicked the sidebar link, the router
+  // served the cached login-page payload instead of making a fresh request,
+  // making it appear as if every navigation redirected to /login.
+  //
+  // Correct behaviour: the auth check runs on ALL request types. For prefetches
+  // of protected pages when the user IS authenticated, NextResponse.next() is
+  // returned normally and the RSC payload for the real page is cached. For
+  // prefetches when the user is NOT authenticated, a redirect is returned so
+  // the router caches the redirect (not the login page content) and handles it
+  // correctly when the link is actually clicked.
 
   // Read env vars fresh on every call — never cache as module-level constants.
   const SUPABASE_URL = normalizeSupabaseUrl(process.env.APP_SUPABASE_URL)
