@@ -22,11 +22,13 @@ export interface UserPermission {
 export type UserRole = 'admin' | 'operation' | 'agent' | 'supplier'
 
 export async function fetchAppUsers(filters?: { role?: string; active?: boolean; search?: string }) {
+  const t0 = performance.now()
   const supabase = await createClient()
   
+  // Explicit column list — avoids fetching any future large/blob columns added to the table.
   let query = supabase
     .from('app_users')
-    .select('*')
+    .select('id, full_name, email, role, active, created_at')
     .order('full_name', { ascending: true })
   
   if (filters?.role && filters.role !== 'all') {
@@ -46,6 +48,7 @@ export async function fetchAppUsers(filters?: { role?: string; active?: boolean;
   
   const { data, error } = await query
   
+  console.log(`[perf] /admin/users fetchAppUsers: ${Math.round(performance.now() - t0)}ms — ${data?.length ?? 0} rows`)
   if (error) {
     console.error('Error fetching app users:', error)
     return { users: [], error: error.message }

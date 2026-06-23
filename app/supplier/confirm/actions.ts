@@ -6,11 +6,15 @@ import { createEmailLog } from '@/lib/email-log'
 import { syncMinimumParticipantsForTourDate } from '@/app/admin/alerts/actions'
 
 export async function fetchReservationsByStatus(status: string, search?: string) {
+  const t0 = performance.now()
   const supabase = await createClient()
 
+  // Explicit column list instead of '*' to avoid pulling unnecessary data.
   let query = supabase
     .from('reservations')
-    .select('*, tours(name), tour_dates(tour_date)')
+    .select(
+      'id, created_at, reservation_number, voucher_number, confirmation_number, lead_passenger_name, agent_name, agent_email, whatsapp_number, participants, status, internal_notes, tour_date_id, tours(name), tour_dates(tour_date)'
+    )
     .eq('status', status)
     .order('created_at', { ascending: false })
     .limit(100)
@@ -22,6 +26,7 @@ export async function fetchReservationsByStatus(status: string, search?: string)
 
   const { data, error } = await query
 
+  console.log(`[perf] /supplier/confirm fetchReservationsByStatus(${status}): ${Math.round(performance.now() - t0)}ms — ${data?.length ?? 0} rows`)
   if (error) {
     return { reservations: [], error: error.message }
   }
@@ -30,8 +35,11 @@ export async function fetchReservationsByStatus(status: string, search?: string)
 }
 
 export async function fetchAllReservationCounts() {
+  const t0 = performance.now()
   const supabase = await createClient()
 
+  // Run all 4 count queries in parallel — each uses head:true so Supabase returns
+  // only the count without row data, making each round-trip as cheap as possible.
   const [waiting, confirmed, notConfirmed, cancelled] = await Promise.all([
     supabase.from('reservations').select('id', { count: 'exact', head: true }).eq('status', 'WAITING FOR CONFIRMATION'),
     supabase.from('reservations').select('id', { count: 'exact', head: true }).eq('status', 'CONFIRMED'),
@@ -39,6 +47,7 @@ export async function fetchAllReservationCounts() {
     supabase.from('reservations').select('id', { count: 'exact', head: true }).eq('status', 'CANCELLED'),
   ])
 
+  console.log(`[perf] /supplier/confirm fetchAllReservationCounts: ${Math.round(performance.now() - t0)}ms — 4 parallel count queries`)
   return {
     waiting: waiting.count || 0,
     confirmed: confirmed.count || 0,

@@ -30,6 +30,7 @@ async function sendEmailWithTimeout(
 }
 
 export async function fetchEmailLogs() {
+  const t0 = performance.now()
   const supabase = await createClient()
 
   const { data, error } = await supabase
@@ -38,6 +39,7 @@ export async function fetchEmailLogs() {
     .order('created_at', { ascending: false })
     .limit(50)
 
+  console.log(`[perf] /admin/email-logs fetchEmailLogs: ${Math.round(performance.now() - t0)}ms — ${data?.length ?? 0} rows`)
   if (error) {
     return { emailLogs: [], error: error.message }
   }
@@ -46,13 +48,15 @@ export async function fetchEmailLogs() {
 }
 
 export async function getPendingEmailCount() {
+  const t0 = performance.now()
   const supabase = await createClient()
 
   const { count, error } = await supabase
     .from('email_logs')
-    .select('*', { count: 'exact', head: true })
+    .select('id', { count: 'exact', head: true })
     .in('status', ['PENDING', 'READY_TO_SEND'])
 
+  console.log(`[perf] /admin/email-logs getPendingEmailCount: ${Math.round(performance.now() - t0)}ms — count=${count ?? 0}`)
   if (error) {
     return { count: 0, error: error.message }
   }

@@ -14,6 +14,7 @@ export interface ReservationFilters {
 }
 
 export async function fetchReservations(filters: ReservationFilters = {}) {
+  const t0 = performance.now()
   const supabase = await createClient()
   
   let query = supabase
@@ -48,6 +49,7 @@ export async function fetchReservations(filters: ReservationFilters = {}) {
 
   const { data, error } = await query
 
+  console.log(`[perf] /admin/reservations fetchReservations: ${Math.round(performance.now() - t0)}ms — ${data?.length ?? 0} rows, filters: ${JSON.stringify(filters)}`)
   return {
     reservations: data || [],
     error: error?.message || null
@@ -55,8 +57,10 @@ export async function fetchReservations(filters: ReservationFilters = {}) {
 }
 
 export async function fetchTours() {
+  const t0 = performance.now()
   const supabase = await createClient()
   const { data, error } = await supabase.from('tours').select('id, name').order('name')
+  console.log(`[perf] /admin/reservations fetchTours: ${Math.round(performance.now() - t0)}ms — ${data?.length ?? 0} rows`)
   return {
     tours: data || [],
     error: error?.message || null

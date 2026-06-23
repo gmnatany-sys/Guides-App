@@ -29,7 +29,7 @@ import {
   cancelReservation,
   type ReservationFilters 
 } from './actions'
-import type { Reservation, Tour } from '@/lib/types'
+import type { Reservation } from '@/lib/types'
 
 function StatusBadge({ status }: { status: string }) {
   const variants: Record<string, string> = {
@@ -47,7 +47,7 @@ function StatusBadge({ status }: { status: string }) {
 
 export default function ReservationsPage() {
   const [reservations, setReservations] = useState<Reservation[]>([])
-  const [tours, setTours] = useState<Tour[]>([])
+  const [tours, setTours] = useState<{ id: string; name: string }[]>([])
   const [isPending, startTransition] = useTransition()
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'warning'; text: string } | null>(null)
   // Filters
@@ -57,23 +57,24 @@ export default function ReservationsPage() {
   const [dateTo, setDateTo] = useState('')
   const [search, setSearch] = useState('')
 
+  // loadData fetches ONLY reservations so the tours list (used by the filter
+  // dropdown) is not redundantly refetched on every action / filter change.
   const loadData = async (filters: ReservationFilters = {}) => {
-    const [reservationsResult, toursResult] = await Promise.all([
-      fetchReservations(filters),
-      fetchTours()
-    ])
-    if (reservationsResult.error) {
-      setMessage({ type: 'error', text: reservationsResult.error })
+    const result = await fetchReservations(filters)
+    if (result.error) {
+      setMessage({ type: 'error', text: result.error })
     } else {
-      setReservations(reservationsResult.reservations)
-    }
-    if (!toursResult.error) {
-      setTours(toursResult.tours)
+      setReservations(result.reservations)
     }
   }
 
+  // Fetch tours once on mount — they change very rarely so no need to refetch.
   useEffect(() => {
+    fetchTours().then((res) => {
+      if (!res.error) setTours(res.tours)
+    })
     loadData()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const handleFilter = () => {

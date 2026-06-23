@@ -6,6 +6,7 @@ import { createEmailLog } from '@/lib/email-log'
 import { syncMinimumParticipantsForTourDate } from '@/app/admin/alerts/actions'
 
 export async function fetchActiveTours() {
+  const t0 = performance.now()
   const supabase = await createClient()
   
   const { data, error } = await supabase
@@ -14,6 +15,7 @@ export async function fetchActiveTours() {
     .eq('active', true)
     .order('name')
 
+  console.log(`[perf] /booking fetchActiveTours: ${Math.round(performance.now() - t0)}ms — ${data?.length ?? 0} rows`)
   return {
     tours: data || [],
     error: error?.message || null
@@ -22,6 +24,7 @@ export async function fetchActiveTours() {
 
 // Active agents for the booking form's Agent dropdown.
 export async function fetchActiveAgents() {
+  const t0 = performance.now()
   const supabase = await createClient()
 
   const { data, error } = await supabase
@@ -31,6 +34,7 @@ export async function fetchActiveAgents() {
     .eq('active', true)
     .order('full_name', { ascending: true })
 
+  console.log(`[perf] /booking fetchActiveAgents: ${Math.round(performance.now() - t0)}ms — ${data?.length ?? 0} rows`)
   return {
     agents: data || [],
     error: error?.message || null,
@@ -106,39 +110,37 @@ async function getActiveParticipantsByDate(
   return map
 }
 
-// Fetch tour dates for a specific month - includes closed/full dates for calendar display
+// Fetch tour dates for a specific month - includes closed/full dates for calendar display.
+// Uses a single Supabase join (tour_dates → tours) to retrieve max_capacity and dates
+// together, then a second batched reservations query — total: 2 round trips instead of 3.
 export async function fetchTourDatesForCalendar(tourId: string, year: number, month: number) {
+  const t0 = performance.now()
   const supabase = await createClient()
-  
-  // Get tour's max_capacity (default to 8 if missing)
-  const { data: tour } = await supabase
-    .from('tours')
-    .select('max_capacity')
-    .eq('id', tourId)
-    .single()
-
-  const maxCapacity = tour?.max_capacity || 8
 
   // Build date range for the month
   const startDate = `${year}-${String(month).padStart(2, '0')}-01`
   const lastDay = new Date(year, month, 0).getDate()
   const endDate = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
 
-  // Get ALL tour_dates for this tour in the date range (open and closed)
+  // Single round-trip: get ALL tour_dates for this tour in the date range AND the tour's
+  // max_capacity via a join — eliminates the separate "get tour" query that ran first.
   const { data: tourDates, error: datesError } = await supabase
     .from('tour_dates')
-    .select('id, tour_id, tour_date, is_open, supplier_status')
+    .select('id, tour_id, tour_date, is_open, supplier_status, tours!inner(max_capacity)')
     .eq('tour_id', tourId)
     .gte('tour_date', startDate)
     .lte('tour_date', endDate)
     .order('tour_date', { ascending: true })
 
   if (datesError) {
-    return { calendarDates: [], maxCapacity, error: datesError.message }
+    return { calendarDates: [], maxCapacity: 8, error: datesError.message }
   }
 
-  // Single batched query: sum active participants for ALL dates in the month at once
-  // (avoids the previous N+1 query-per-date loop that made the calendar slow).
+  // Pull max_capacity out of the first row (same tour → same capacity for all rows).
+  const maxCapacity =
+    (tourDates?.[0]?.tours as { max_capacity?: number | null } | null)?.max_capacity ?? 8
+
+  // Second query: batch-fetch participant counts for all dates in the month.
   const participantsByDate = await getActiveParticipantsByDate(
     supabase,
     (tourDates || []).map((td) => td.id)
@@ -158,6 +160,7 @@ export async function fetchTourDatesForCalendar(tourId: string, year: number, mo
     }
   })
 
+  console.log(`[perf] /booking fetchTourDatesForCalendar: ${Math.round(performance.now() - t0)}ms — ${calendarDates.length} dates (2 queries: join + reservations batch)`)
   return { calendarDates, maxCapacity, error: null }
 }
 

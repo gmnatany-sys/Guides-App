@@ -34,7 +34,10 @@ export default function SupplierConfirmPage() {
         fetchReservationsByStatus(activeTab, search),
         fetchAllReservationCounts()
       ])
-      setReservations(reservationsResult.reservations)
+      // Cast required because fetchReservationsByStatus uses an explicit column list
+      // rather than select('*'), so TypeScript infers a narrower shape; at runtime
+      // all fields consumed by this component are present.
+      setReservations(reservationsResult.reservations as Reservation[])
       setCounts(countsResult)
     } catch (err) {
       console.error('[v0] supplier/confirm loadData failed:', err)
