@@ -84,12 +84,6 @@ export async function proxy(request: NextRequest) {
   const isAuthenticated = !!user && !getUserError
   const isPublic = isPublicPath(pathname)
 
-  console.log(
-    `[proxy] ${pathname} | session=${isAuthenticated ? 'yes' : 'no'}` +
-    (user ? ` user=${user.email}` : '') +
-    ` | redirect=${!isAuthenticated && !isPublic ? 'yes→/login' : 'no'}`
-  )
-
   // Unauthenticated request to a protected route → redirect to /login?next=<path>
   if (!isAuthenticated && !isPublic) {
     const loginUrl = request.nextUrl.clone()

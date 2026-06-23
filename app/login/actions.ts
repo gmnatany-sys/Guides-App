@@ -42,6 +42,23 @@ export async function loginAction(formData: FormData) {
     return { error: `Authentication error: ${authError.message}` }
   }
 
+  // Force the Supabase SSR cookie write to happen synchronously before redirect().
+  //
+  // Root cause of the original session-loss bug:
+  // signInWithPassword() stores the session in memory and then emits a SIGNED_IN
+  // event via onAuthStateChange — but that listener is registered as async and
+  // fires AFTER signInWithPassword() returns. When redirect() is called next, it
+  // throws a NEXT_REDIRECT error that unwinds the stack immediately, so the async
+  // onAuthStateChange callback (which calls setAll → cookieStore.set()) never runs.
+  // Result: no Set-Cookie header is ever sent to the browser.
+  //
+  // Fix: calling getSession() forces a synchronous read of the in-memory session,
+  // which triggers applyServerStorage → setAll → cookieStore.set() immediately,
+  // writing sb-handniwiwphefterousk-auth-token to the cookie store before redirect()
+  // throws. The browser then receives the Set-Cookie header and subsequent requests
+  // carry the auth cookie, which the proxy reads to confirm the session.
+  await supabase.auth.getSession()
+
   // 2. Verify the email exists in app_users and is active.
   const { data: appUser, error: userError } = await supabase
     .from('app_users')
