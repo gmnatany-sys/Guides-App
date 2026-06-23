@@ -1,5 +1,10 @@
 import { OpenDatesManager } from '@/components/open-dates-manager'
+import { PermissionGate } from '@/components/permission-gate'
 
 export default function OpenDatesPage() {
-  return <OpenDatesManager />
+  return (
+    <PermissionGate permissions={['open_dates_view_access']}>
+      <OpenDatesManager />
+    </PermissionGate>
+  )
 }

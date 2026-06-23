@@ -8,9 +8,10 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { PermissionGate } from '@/components/permission-gate'
 import type { Tour } from '@/lib/types'
 
-export default async function ToursPage() {
+async function ToursContent() {
   const supabase = await createClient()
   const { data: tours, error } = await supabase
     .from('tours')
@@ -70,5 +71,13 @@ export default async function ToursPage() {
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+export default function ToursPage() {
+  return (
+    <PermissionGate permissions={['tours_manage_access']}>
+      <ToursContent />
+    </PermissionGate>
   )
 }
