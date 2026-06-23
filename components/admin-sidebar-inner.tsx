@@ -9,9 +9,12 @@ import type { NavItem } from '@/lib/nav-config'
 
 interface AdminSidebarInnerProps {
   navItems: NavItem[]
+  /** Current user identity — null when not logged in (should not normally happen
+   *  in Stage 1 since the proxy redirects unauthenticated users to /login). */
+  user: { full_name: string; email: string; role: string } | null
 }
 
-export function AdminSidebarInner({ navItems }: AdminSidebarInnerProps) {
+export function AdminSidebarInner({ navItems, user }: AdminSidebarInnerProps) {
   const pathname = usePathname()
   const [isPending, startTransition] = useTransition()
 
@@ -47,8 +50,15 @@ export function AdminSidebarInner({ navItems }: AdminSidebarInnerProps) {
         ))}
       </nav>
 
-      {/* Sign out */}
-      <div className="mt-6 pt-6 border-t border-border">
+      {/* User identity + sign out */}
+      <div className="mt-6 pt-6 border-t border-border flex flex-col gap-3">
+        {user && (
+          <div className="flex flex-col gap-0.5">
+            <span className="text-sm font-medium text-foreground truncate">{user.full_name}</span>
+            <span className="text-xs text-muted-foreground truncate">{user.email}</span>
+            <span className="text-xs text-muted-foreground capitalize">{user.role}</span>
+          </div>
+        )}
         <button
           onClick={handleLogout}
           disabled={isPending}

@@ -1,7 +1,7 @@
 // AUTH_ENFORCEMENT_ENABLED = false
 import { AdminSidebar } from '@/components/admin-sidebar'
 
-export default function BookingLayout({ children }: { children: React.ReactNode }) {
+export default async function BookingLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen">
       <AdminSidebar />

@@ -3,10 +3,24 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 
+// Role → default landing page after login.
+// The `next` param (from ?next=) overrides this only for admin/operation roles
+// so that deep links work (e.g. clicking a link that sends you to /admin/users
+// while logged out will bring you there after login, not to /admin/reservations).
+// Agent and supplier roles always land on their fixed home page regardless of
+// the `next` param — deep links into admin routes should not be honoured for them.
+const ROLE_HOME: Record<string, string> = {
+  admin:     '/admin/reservations',
+  operation: '/admin/reservations',
+  agent:     '/booking',
+  supplier:  '/supplier/confirm',
+  guide:     '/supplier/confirm',
+}
+
 export async function loginAction(formData: FormData) {
-  const email = (formData.get('email') as string).trim().toLowerCase()
+  const email    = (formData.get('email') as string).trim().toLowerCase()
   const password = formData.get('password') as string
-  const next = (formData.get('next') as string | null) || '/admin/reservations'
+  const next     = (formData.get('next') as string | null) || ''
 
   if (!email || !password) {
     return { error: 'Email and password are required.' }
@@ -14,21 +28,31 @@ export async function loginAction(formData: FormData) {
 
   const supabase = await createClient()
 
-  const { error } = await supabase.auth.signInWithPassword({ email, password })
+  // 1. Authenticate against Supabase Auth.
+  const { error: authError } = await supabase.auth.signInWithPassword({ email, password })
 
-  if (error) {
-    if (error.message.toLowerCase().includes('invalid login')) {
+  if (authError) {
+    if (
+      authError.message.toLowerCase().includes('invalid login') ||
+      authError.message.toLowerCase().includes('invalid credentials') ||
+      authError.message.toLowerCase().includes('email not confirmed')
+    ) {
       return { error: 'Invalid email or password.' }
     }
-    return { error: error.message }
+    return { error: `Authentication error: ${authError.message}` }
   }
 
-  // After sign-in, validate the email exists in app_users and is active.
-  const { data: appUser } = await supabase
+  // 2. Verify the email exists in app_users and is active.
+  const { data: appUser, error: userError } = await supabase
     .from('app_users')
-    .select('id, active')
+    .select('id, role, active')
     .ilike('email', email)
     .maybeSingle()
+
+  if (userError) {
+    await supabase.auth.signOut()
+    return { error: 'Session error — could not verify your account. Please try again.' }
+  }
 
   if (!appUser) {
     await supabase.auth.signOut()
@@ -40,7 +64,20 @@ export async function loginAction(formData: FormData) {
     return { error: 'Your account has been deactivated. Contact an administrator.' }
   }
 
-  redirect(next)
+  // 3. Determine destination.
+  // For admin/operation: honour the ?next= param so deep links work.
+  // For agent/supplier/guide: always go to their fixed home, ignore ?next=.
+  const role = appUser.role as string
+  const roleHome = ROLE_HOME[role] ?? '/admin/reservations'
+
+  let destination: string
+  if ((role === 'admin' || role === 'operation') && next && next.startsWith('/') && next !== '/login') {
+    destination = next
+  } else {
+    destination = roleHome
+  }
+
+  redirect(destination)
 }
 
 export async function logoutAction() {

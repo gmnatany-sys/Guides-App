@@ -3,29 +3,50 @@ import { createServerClient } from '@supabase/ssr'
 import { normalizeSupabaseUrl } from '@/lib/supabase/url'
 
 /**
- * Stage 1 — session refresh only, no auth redirects.
+ * Stage 1 — session refresh + login protection.
  *
- * The proxy's only job is to call getUser() so Supabase can rotate the
- * access token before it expires and write the updated cookie onto the response.
- * It never redirects to /login. All pages remain fully accessible.
+ * Responsibilities:
+ * 1. Refresh the Supabase session token on every full-page navigation so the
+ *    access token never silently expires mid-session.
+ * 2. Redirect unauthenticated requests for protected routes to /login?next=<path>.
+ * 3. Redirect already-authenticated users away from /login to avoid a loop.
  *
- * Bugs avoided from previous implementation:
- * - Env vars read inside the function body, never as module-level constants
- *   (module-level constants go undefined during Next.js dev env reloads).
- * - Single getUser() call only — no double-call pattern.
- * - POST requests (Server Actions) skipped — a redirect on a POST breaks actions.
- * - RSC prefetch requests skipped — a redirect on a prefetch gets cached by the
- *   router and causes spurious /login redirects on the next real navigation.
+ * Safety rules that prevent the redirect loops from the previous build:
+ * - Env vars read per-call, never cached as module-level constants (they go
+ *   undefined during Next.js dev-server env reloads).
+ * - POSTs (Server Actions) are always passed through — redirecting a POST breaks
+ *   Server Actions entirely.
+ * - RSC prefetch requests are always passed through — a redirect cached by the
+ *   router causes spurious /login redirects on the next real navigation.
+ * - /login itself is never redirected, preventing an infinite loop.
+ * - No permission queries, no app_users queries — only auth.getUser().
  */
+
+// Routes that do NOT require a login session.
+const PUBLIC_PATHS = ['/login']
+
+function isPublicPath(pathname: string): boolean {
+  return PUBLIC_PATHS.some(
+    (p) => pathname === p || pathname.startsWith(p + '/')
+  )
+}
+
 export async function proxy(request: NextRequest) {
-  // Skip POSTs (Server Actions) and RSC prefetches.
-  const isPost = request.method === 'POST'
+  const { pathname } = request.nextUrl
+
+  // Always pass through POSTs (Server Actions) — never redirect them.
+  if (request.method === 'POST') {
+    return NextResponse.next()
+  }
+
+  // Always pass through RSC prefetch requests — a redirect stored in the
+  // router cache causes spurious redirects on subsequent navigations.
   const isPrefetch =
     request.headers.get('Next-Router-Prefetch') === '1' ||
     request.headers.has('Next-Router-State-Tree') ||
     request.nextUrl.searchParams.has('_rsc')
 
-  if (isPost || isPrefetch) {
+  if (isPrefetch) {
     return NextResponse.next()
   }
 
@@ -41,11 +62,11 @@ export async function proxy(request: NextRequest) {
         return request.cookies.getAll()
       },
       setAll(cookiesToSet) {
-        // 1. Mutate the request cookie jar so downstream Server Components
-        //    in the same render pass see the refreshed tokens.
+        // Mutate the request cookie jar so Server Components in the same render
+        // pass see the refreshed tokens.
         cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
-        // 2. Rebuild the response forwarding the now-mutated request so the
-        //    browser receives the updated Set-Cookie headers.
+        // Rebuild the response forwarding the mutated request so the browser
+        // receives updated Set-Cookie headers.
         response = NextResponse.next({ request })
         cookiesToSet.forEach(({ name, value, options }) =>
           response.cookies.set(name, value, options)
@@ -54,9 +75,27 @@ export async function proxy(request: NextRequest) {
     },
   })
 
-  // Refresh the session token if it has expired.
-  // The result is unused in Stage 1 — no auth enforcement here.
-  await supabase.auth.getUser()
+  // Single getUser() call — refreshes the session token if expired.
+  const { data: { user } } = await supabase.auth.getUser()
+
+  const isAuthenticated = !!user
+  const isPublic = isPublicPath(pathname)
+
+  // Unauthenticated request to a protected route → redirect to /login?next=<path>
+  if (!isAuthenticated && !isPublic) {
+    const loginUrl = request.nextUrl.clone()
+    loginUrl.pathname = '/login'
+    loginUrl.search = `next=${encodeURIComponent(pathname)}`
+    return NextResponse.redirect(loginUrl)
+  }
+
+  // Authenticated user visiting /login → redirect to default home to avoid loop.
+  if (isAuthenticated && pathname === '/login') {
+    const homeUrl = request.nextUrl.clone()
+    homeUrl.pathname = '/admin/reservations'
+    homeUrl.search = ''
+    return NextResponse.redirect(homeUrl)
+  }
 
   return response
 }
