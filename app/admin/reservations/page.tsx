@@ -265,6 +265,9 @@ export default function ReservationsPage() {
                 disabled={!canSearch}
                 title={!canSearch ? 'You do not have search access.' : undefined}
               />
+              {!canSearch && (
+                <p className="text-xs text-muted-foreground">Search is not available for your user.</p>
+              )}
             </div>
 
             <div className="space-y-2 flex items-end gap-2">
