@@ -5,9 +5,6 @@ import { AdminSidebarInner } from './admin-sidebar-inner'
 
 export function AdminSidebar() {
   return (
-    <AdminSidebarInner
-      navItems={NAV_ITEMS}
-      user={{ full_name: 'Admin', email: '', role: 'admin' }}
-    />
+    <AdminSidebarInner navItems={NAV_ITEMS} />
   )
 }

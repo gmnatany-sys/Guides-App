@@ -2,29 +2,15 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useTransition } from 'react'
 import { cn } from '@/lib/utils'
-import { logoutAction } from '@/app/login/actions'
 import type { NavItem } from '@/lib/nav-config'
 
 interface AdminSidebarInnerProps {
   navItems: NavItem[]
-  user: {
-    full_name: string
-    email: string
-    role: string
-  }
 }
 
-export function AdminSidebarInner({ navItems, user }: AdminSidebarInnerProps) {
+export function AdminSidebarInner({ navItems }: AdminSidebarInnerProps) {
   const pathname = usePathname()
-  const [isPending, startTransition] = useTransition()
-
-  function handleLogout() {
-    startTransition(async () => {
-      await logoutAction()
-    })
-  }
 
   return (
     <aside className="w-64 border-r border-border bg-card min-h-screen p-6 flex flex-col">
@@ -51,22 +37,6 @@ export function AdminSidebarInner({ navItems, user }: AdminSidebarInnerProps) {
           </Link>
         ))}
       </nav>
-
-      {/* User identity + logout */}
-      <div className="mt-6 pt-6 border-t border-border flex flex-col gap-3">
-        <div className="flex flex-col gap-0.5">
-          <span className="text-sm font-medium text-foreground truncate">{user.full_name}</span>
-          <span className="text-xs text-muted-foreground truncate">{user.email}</span>
-          <span className="text-xs text-muted-foreground capitalize">{user.role}</span>
-        </div>
-        <button
-          onClick={handleLogout}
-          disabled={isPending}
-          className="w-full h-8 rounded-md border border-border text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-50 transition-colors"
-        >
-          {isPending ? 'Signing out…' : 'Sign out'}
-        </button>
-      </div>
     </aside>
   )
 }
