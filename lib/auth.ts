@@ -51,8 +51,7 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
       active: appUser.active,
       permissions: (perms ?? []).map((p) => p.permission_key),
     }
-  } catch (err) {
-    console.log('[v0][getCurrentUser] caught exception:', err)
+  } catch {
     return null
   }
 })
