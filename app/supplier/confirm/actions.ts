@@ -4,6 +4,8 @@ import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 import { createEmailLog } from '@/lib/email-log'
 import { syncMinimumParticipantsForTourDate } from '@/app/admin/alerts/actions'
+import { getCurrentUser } from '@/lib/auth'
+import { hasPermission } from '@/lib/auth-utils'
 
 export async function fetchReservationsByStatus(status: string, search?: string) {
   const supabase = await createClient()
@@ -63,6 +65,10 @@ async function getNextConfirmationNumber(supabase: Awaited<ReturnType<typeof cre
 }
 
 export async function supplierConfirmBooking(reservationId: string) {
+  const user = await getCurrentUser()
+  if (!hasPermission(user, 'supplier_confirmation_action')) {
+    return { success: false, error: 'Access denied' }
+  }
   try {
     const supabase = await createClient()
 
@@ -142,6 +148,10 @@ export async function supplierConfirmBooking(reservationId: string) {
 }
 
 export async function supplierMarkNotConfirmed(reservationId: string) {
+  const user = await getCurrentUser()
+  if (!hasPermission(user, 'supplier_confirmation_action')) {
+    return { success: false, error: 'Access denied' }
+  }
   try {
     const supabase = await createClient()
 
@@ -212,6 +222,10 @@ export async function supplierMarkNotConfirmed(reservationId: string) {
 }
 
 export async function supplierCancelBooking(reservationId: string) {
+  const user = await getCurrentUser()
+  if (!hasPermission(user, 'supplier_confirmation_action')) {
+    return { success: false, error: 'Access denied' }
+  }
   try {
     const supabase = await createClient()
 
