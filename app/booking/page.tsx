@@ -60,37 +60,29 @@ export default function BookingPage() {
     return { year: now.getFullYear(), month: now.getMonth() + 1 }
   })
 
-  // Load active tours on mount
+  // Load tours and agents in parallel on mount — single effect, two concurrent fetches.
   useEffect(() => {
-    async function loadTours() {
-      try {
-        const { tours: data } = await fetchActiveTours()
-        setTours(data)
-      } catch (err) {
-        console.error('[v0] booking loadTours failed:', err)
-      }
+    async function loadInitialData() {
+      const [toursResult, agentsResult] = await Promise.all([
+        fetchActiveTours(),
+        fetchActiveAgents(),
+      ])
+      if (!toursResult.error) setTours(toursResult.tours)
+      if (!agentsResult.error) setAgents(agentsResult.agents)
     }
-    loadTours()
+    loadInitialData()
   }, [])
 
-  // Load active agents on mount
-  useEffect(() => {
-    async function loadAgents() {
-      try {
-        const { agents: data } = await fetchActiveAgents()
-        setAgents(data)
-      } catch (err) {
-        console.error('[v0] booking loadAgents failed:', err)
-      }
-    }
-    loadAgents()
-  }, [])
-
-  // Load calendar dates when tour or month changes
+  // Load calendar dates when tour or month changes.
+  // Also handles the tour-change reset (clears selection + form state) so a
+  // separate reset useEffect is not needed — avoids the duplicate state update
+  // that caused two renders on every tour pick.
   useEffect(() => {
     if (!selectedTourId) {
       setCalendarDates([])
       setSelectedDateInfo(null)
+      setParticipants('')
+      setParticipantsError(null)
       return
     }
 
@@ -122,13 +114,6 @@ export default function BookingPage() {
     }
     loadCalendarDates()
   }, [selectedTourId, currentMonth])
-
-  // Reset selection when tour changes
-  useEffect(() => {
-    setSelectedDateInfo(null)
-    setParticipants('')
-    setParticipantsError(null)
-  }, [selectedTourId])
 
   // Validate participants when changed
   useEffect(() => {

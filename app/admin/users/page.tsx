@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useTransition } from 'react'
+import { useState, useEffect, useRef, useTransition } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -132,6 +132,11 @@ export default function UsersPage() {
   const [userPermissions, setUserPermissions] = useState<UserPermission[]>([])
   const [isLoadingPermissions, setIsLoadingPermissions] = useState(false)
 
+  // Guards the initial fetch against React 18 Strict Mode double-invocation.
+  // Strict Mode unmounts + remounts effects in dev, which would fire two concurrent
+  // fetchAppUsers() calls on mount without this guard.
+  const didInitialLoad = useRef(false)
+
   async function loadUsers() {
     setIsLoading(true)
     const filters: { role?: string; active?: boolean; search?: string } = {}
@@ -156,7 +161,10 @@ export default function UsersPage() {
   }
 
   useEffect(() => {
+    if (didInitialLoad.current) return
+    didInitialLoad.current = true
     loadUsers()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   function handleApplyFilters() {

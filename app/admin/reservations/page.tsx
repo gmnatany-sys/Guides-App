@@ -256,6 +256,7 @@ export default function ReservationsPage() {
                 placeholder="Enter search term..."
                 value={search} 
                 onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleFilter() }}
               />
             </div>
 
