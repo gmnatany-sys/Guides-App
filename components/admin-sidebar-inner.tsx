@@ -2,7 +2,9 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useTransition } from 'react'
 import { cn } from '@/lib/utils'
+import { logoutAction } from '@/app/login/actions'
 import type { NavItem } from '@/lib/nav-config'
 
 interface AdminSidebarInnerProps {
@@ -11,6 +13,13 @@ interface AdminSidebarInnerProps {
 
 export function AdminSidebarInner({ navItems }: AdminSidebarInnerProps) {
   const pathname = usePathname()
+  const [isPending, startTransition] = useTransition()
+
+  function handleLogout() {
+    startTransition(async () => {
+      await logoutAction()
+    })
+  }
 
   return (
     <aside className="w-64 border-r border-border bg-card min-h-screen p-6 flex flex-col">
@@ -37,6 +46,17 @@ export function AdminSidebarInner({ navItems }: AdminSidebarInnerProps) {
           </Link>
         ))}
       </nav>
+
+      {/* Sign out */}
+      <div className="mt-6 pt-6 border-t border-border">
+        <button
+          onClick={handleLogout}
+          disabled={isPending}
+          className="w-full h-8 rounded-md border border-border text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-50 transition-colors"
+        >
+          {isPending ? 'Signing out…' : 'Sign out'}
+        </button>
+      </div>
     </aside>
   )
 }

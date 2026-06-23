@@ -2,39 +2,35 @@ import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { normalizeSupabaseUrl } from './url'
 
-// Use APP_SUPABASE_URL (base URL only). normalizeSupabaseUrl strips any trailing
-// slash or accidental /rest/v1 suffix, and falls back to the correct project if unset.
-const SUPABASE_URL = normalizeSupabaseUrl(process.env.APP_SUPABASE_URL)
-const SUPABASE_ANON_KEY = process.env.JWT_8
-
 /**
- * Especially important if using Fluid compute: Don't put this client in a
- * global variable. Always create a new client within each function when using
- * it.
+ * Always create a new client within each function call.
+ * Do NOT use module-level constants for env vars — Next.js dev server can
+ * reload .env mid-flight (vm:files_synced), which causes constants captured
+ * at module init to hold undefined and breaks auth silently.
  */
 export async function createClient() {
+  // Read env vars fresh on every call so a dev-server env reload never
+  // causes a stale/undefined value to reach Supabase.
+  const SUPABASE_URL = normalizeSupabaseUrl(process.env.APP_SUPABASE_URL)
+  const SUPABASE_ANON_KEY = process.env.JWT_8!
+
   const cookieStore = await cookies()
 
-  return createServerClient(
-    SUPABASE_URL,
-    SUPABASE_ANON_KEY,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll()
-        },
-        setAll(cookiesToSet) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options),
-            )
-          } catch {
-            // The "setAll" method was called from a Server Component.
-            // This can be ignored if you have proxy refreshing
-            // user sessions.
-          }
-        },
+  return createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    cookies: {
+      getAll() {
+        return cookieStore.getAll()
+      },
+      setAll(cookiesToSet) {
+        try {
+          cookiesToSet.forEach(({ name, value, options }) =>
+            cookieStore.set(name, value, options),
+          )
+        } catch {
+          // Called from a Server Component — safe to ignore.
+          // The proxy handles session refresh via response cookies.
+        }
       },
     },
-  )
+  })
 }

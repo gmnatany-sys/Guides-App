@@ -8,6 +8,6 @@ export default async function LoginPage({
   searchParams: Promise<{ next?: string }>
 }) {
   const { next } = await searchParams
-  const destination = next && next.startsWith('/') ? next : '/admin/tours'
+  const destination = next && next.startsWith('/') ? next : '/admin/reservations'
   return <LoginForm next={destination} />
 }
