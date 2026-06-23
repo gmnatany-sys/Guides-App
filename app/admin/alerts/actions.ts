@@ -3,6 +3,8 @@
 import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 import { createEmailLog } from '@/lib/email-log'
+import { getCurrentUser } from '@/lib/auth'
+import { hasPermission } from '@/lib/auth-utils'
 
 const MIN_PARTICIPANTS_CANCEL_MESSAGE = 'The tour was cancelled because the minimum number of participants was not reached.'
 
@@ -892,6 +894,10 @@ export async function fetchMinimumParticipantCandidates(): Promise<{
 }
 
 export async function resolveAlert(alertId: string, decision: 'KEEP_TOUR' | 'CANCEL_TOUR', notes?: string) {
+  const user = await getCurrentUser()
+  if (!hasPermission(user, 'minimum_participants_action_access')) {
+    return { success: false, error: 'Access denied' }
+  }
   const supabase = await createClient()
   
   // Get the alert details first
@@ -1102,6 +1108,10 @@ export async function resolveAlert(alertId: string, decision: 'KEEP_TOUR' | 'CAN
 // CANCELLED (due to minimum participants) but never got a SENT cancellation email,
 // and send the missing email now. Never duplicates a SENT email.
 export async function repairMissingCancellationEmails(alertId: string): Promise<CancellationResult> {
+  const user = await getCurrentUser()
+  if (!hasPermission(user, 'minimum_participants_action_access')) {
+    return { success: false, error: 'Access denied', allProcessed: false, activeReservationsFound: 0, reservationsCancelled: 0, emailLogsCreated: 0, emailsSent: 0, emailsSkippedDuplicate: 0, emailsFailed: 0, message: 'Access denied', details: [] }
+  }
   const supabase = await createClient()
 
   const empty: CancellationResult = {
@@ -1424,6 +1434,10 @@ export async function debugCancellationEmails(): Promise<CancellationDebugResult
 // Send (or resend) ONE missing/failed cancellation email for a single reservation.
 // Reuses the same strict duplicate-protected, retry/backoff send helper.
 export async function sendMissingCancellationEmail(reservationId: string): Promise<CancellationEmailDetail> {
+  const user = await getCurrentUser()
+  if (!hasPermission(user, 'minimum_participants_action_access')) {
+    return { reservation_id: reservationId, voucher_number: '', reservation_number: '', lead_passenger_name: '', participants: 0, agent_email: '', email_sent: false, email_log_created: false, skipped_duplicate: false, error: 'Access denied' }
+  }
   const supabase = await createClient()
   const nowIso = new Date().toISOString()
 
@@ -1474,6 +1488,10 @@ export async function sendMissingCancellationEmail(reservationId: string): Promi
 }
 
 export async function checkAndCreateAlerts(): Promise<CheckResult> {
+  const user = await getCurrentUser()
+  if (!hasPermission(user, 'minimum_participants_action_access')) {
+    return { success: false, error: 'Access denied', alertsCreated: 0, alertsSkipped: 0, emailLogsCreated: 0, emailLogsSkipped: 0, details: [] }
+  }
   const supabase = await createClient()
   const today = new Date()
   
@@ -1720,6 +1738,10 @@ export interface RepairResult {
 }
 
 export async function repairMissingEmailLogs(): Promise<RepairResult> {
+  const user = await getCurrentUser()
+  if (!hasPermission(user, 'minimum_participants_action_access')) {
+    return { success: false, error: 'Access denied', emailLogsCreated: 0, emailLogsSkipped: 0, details: [] }
+  }
   const supabase = await createClient()
   
   const result: RepairResult = {
@@ -2136,6 +2158,10 @@ export async function syncMinimumParticipantsForTourDate(
 export async function syncVisibleMinimumParticipantIssues(
   tourDateIds: string[]
 ): Promise<{ success: boolean; synced: number; error?: string }> {
+  const user = await getCurrentUser()
+  if (!hasPermission(user, 'minimum_participants_action_access')) {
+    return { success: false, synced: 0, error: 'Access denied' }
+  }
   try {
     const ids = Array.from(new Set((tourDateIds || []).filter(Boolean)))
     if (ids.length === 0) return { success: true, synced: 0 }
@@ -2169,6 +2195,10 @@ export async function resolveAlertForTourDate(
   decision: 'KEEP_TOUR' | 'CANCEL_TOUR',
   notes?: string
 ) {
+  const user = await getCurrentUser()
+  if (!hasPermission(user, 'minimum_participants_action_access')) {
+    return { success: false, error: 'Access denied' }
+  }
   const supabase = await createClient()
 
   // Ensure an alert row exists for this tour date.
@@ -2225,6 +2255,10 @@ export async function resolveAlertForTourDate(
 // the next 7 days (the window where stages apply) and syncs each one. Bounded
 // and safe to run on demand; not run automatically on page load.
 export async function refreshMinimumParticipantStages(): Promise<CheckResult> {
+  const user = await getCurrentUser()
+  if (!hasPermission(user, 'minimum_participants_action_access')) {
+    return { success: false, error: 'Access denied', alertsCreated: 0, alertsSkipped: 0, emailLogsCreated: 0, emailLogsSkipped: 0, details: [] }
+  }
   const result: CheckResult = {
     success: true,
     alertsCreated: 0,
