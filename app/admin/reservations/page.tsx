@@ -109,6 +109,10 @@ export default function ReservationsPage() {
   }
 
   const handleConfirm = (id: string) => {
+    if (!canAction) {
+      setMessage({ type: 'error', text: 'You do not have permission to perform this action.' })
+      return
+    }
     startTransition(async () => {
       setMessage(null)
       const result = await confirmReservation(id)
@@ -128,6 +132,10 @@ export default function ReservationsPage() {
   }
 
   const handleNotConfirmed = (id: string) => {
+    if (!canAction) {
+      setMessage({ type: 'error', text: 'You do not have permission to perform this action.' })
+      return
+    }
     startTransition(async () => {
       setMessage(null)
       const result = await markNotConfirmed(id)
@@ -147,6 +155,10 @@ export default function ReservationsPage() {
   }
 
   const handleCancel = (id: string) => {
+    if (!canAction) {
+      setMessage({ type: 'error', text: 'You do not have permission to perform this action.' })
+      return
+    }
     startTransition(async () => {
       setMessage(null)
       try {
