@@ -18,7 +18,6 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/admin/diagnostics',            label: 'Diagnostics',                  permissions: ['email_logs_view_access'] },
   { href: '/admin/users',                  label: 'Users',                        permissions: ['users_manage_access'] },
   { href: '/availability',                 label: 'Availability Calendar (View)', permissions: ['availability_view_access'] },
-  { href: '/supplier/availability',        label: 'Supplier Availability',        permissions: ['supplier_confirmation_view'] },
   { href: '/supplier/confirm',             label: 'Supplier Confirmation',        permissions: ['supplier_confirmation_view'] },
   { href: '/booking',                      label: 'Booking Form',                 permissions: ['booking_form_access'] },
 ]
