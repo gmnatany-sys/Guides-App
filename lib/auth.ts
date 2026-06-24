@@ -1,6 +1,7 @@
 'use server'
 
 import { cache } from 'react'
+import { headers } from 'next/headers'
 import { createClient } from '@/lib/supabase/server'
 import { createClient as createServiceClient } from '@supabase/supabase-js'
 import { normalizeSupabaseUrl } from '@/lib/supabase/url'
@@ -45,10 +46,15 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   try {
     const t0 = Date.now()
 
+    // Resolve the current route path for log context.
+    // next/headers is available in RSC and server actions.
+    const hdrs = await headers()
+    const route = hdrs.get('x-invoke-path') ?? hdrs.get('next-url') ?? 'unknown'
+
     // Step 1: verify identity via session client (anon key + cookie).
     const supabase = await createClient()
     const { data: { user }, error: authError } = await supabase.auth.getUser()
-    console.log(`[v0] getCurrentUser auth.getUser: ${Date.now() - t0}ms`)
+    console.log(`[v0] getCurrentUser auth.getUser: ${Date.now() - t0}ms — ${route}`)
     if (authError || !user?.email) return null
 
     // Step 2: read app_users and user_permissions via service role to skip RLS.
@@ -60,7 +66,7 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
       .select('id, full_name, email, role, active')
       .ilike('email', user.email)
       .maybeSingle()
-    console.log(`[v0] getCurrentUser app_users query: ${Date.now() - t1}ms`)
+    console.log(`[v0] getCurrentUser app_users query: ${Date.now() - t1}ms — ${route}`)
 
     if (userError || !appUser) return null
     if (!appUser.active) return null
@@ -71,8 +77,8 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
       .select('permission_key')
       .eq('user_id', appUser.id)
       .eq('enabled', true)
-    console.log(`[v0] getCurrentUser user_permissions query: ${Date.now() - t2}ms`)
-    console.log(`[v0] getCurrentUser total: ${Date.now() - t0}ms`)
+    console.log(`[v0] getCurrentUser user_permissions query: ${Date.now() - t2}ms — ${route}`)
+    console.log(`[v0] getCurrentUser total: ${Date.now() - t0}ms — ${route}`)
 
     return {
       id: appUser.id,

@@ -6,6 +6,16 @@ const SUPABASE_URL = normalizeSupabaseUrl(process.env.APP_SUPABASE_URL)
 const SUPABASE_ANON_KEY = process.env.JWT_8!
 
 export async function proxy(request: NextRequest) {
+  const { pathname } = request.nextUrl
+
+  // Reject malformed paths that contain a comma — no valid app route has one.
+  // These are stale browser requests or bot probes with joined URLs
+  // (e.g. /admin/tours,%20/admin/tours). Returning 404 immediately avoids
+  // firing a Supabase Auth round-trip for invalid input.
+  if (pathname.includes(',')) {
+    return new NextResponse(null, { status: 404 })
+  }
+
   let response = NextResponse.next({ request })
 
   // Refresh the session cookie on every request so it doesn't expire.
@@ -26,16 +36,18 @@ export async function proxy(request: NextRequest) {
     },
   })
 
-  // Calling getUser() triggers the token refresh if needed.
-  // Store the result to avoid a second round-trip below.
+  // Use getSession() here — it decodes the JWT locally (no network round-trip)
+  // and is sufficient to decide whether a user is logged in for the redirect
+  // gate below. getUser() (which makes a remote Supabase Auth call to verify
+  // the JWT) is reserved for getCurrentUser() in lib/auth.ts where full trust
+  // is required. This reduces proxy latency from ~1000ms to ~1ms.
   const t0 = Date.now()
   const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  console.log(`[v0] proxy getUser: ${Date.now() - t0}ms — ${request.nextUrl.pathname}`)
+    data: { session },
+  } = await supabase.auth.getSession()
+  console.log(`[v0] proxy getSession: ${Date.now() - t0}ms — ${pathname}`)
 
-  // Redirect unauthenticated users away from protected routes to /login.
-  const { pathname } = request.nextUrl
+  const isLoggedIn = !!session?.user
   const isProtected =
     pathname.startsWith('/admin') ||
     pathname.startsWith('/booking') ||
@@ -43,14 +55,14 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith('/supplier')
   const isLoginPage = pathname === '/login'
 
-  if (isProtected && !user) {
+  if (isProtected && !isLoggedIn) {
     const loginUrl = new URL('/login', request.url)
     loginUrl.searchParams.set('next', pathname)
     return NextResponse.redirect(loginUrl)
   }
 
   // If already logged in, don't show /login.
-  if (isLoginPage && user) {
+  if (isLoginPage && isLoggedIn) {
     return NextResponse.redirect(new URL('/', request.url))
   }
 
