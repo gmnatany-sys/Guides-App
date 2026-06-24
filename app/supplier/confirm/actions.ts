@@ -6,6 +6,7 @@ import { createEmailLog } from '@/lib/email-log'
 import { syncMinimumParticipantsForTourDate } from '@/app/admin/alerts/actions'
 
 export async function fetchReservationsByStatus(status: string, search?: string) {
+  const t0 = Date.now()
   const supabase = await createClient()
 
   let query = supabase
@@ -21,6 +22,7 @@ export async function fetchReservationsByStatus(status: string, search?: string)
   }
 
   const { data, error } = await query
+  console.log(`[v0] pageData route=/supplier/confirm step=fetchReservationsByStatus status=${status} duration=${Date.now() - t0}ms`)
 
   if (error) {
     return { reservations: [], error: error.message }
@@ -30,6 +32,7 @@ export async function fetchReservationsByStatus(status: string, search?: string)
 }
 
 export async function fetchAllReservationCounts() {
+  const t0 = Date.now()
   const supabase = await createClient()
 
   const [waiting, confirmed, notConfirmed, cancelled] = await Promise.all([
@@ -38,6 +41,7 @@ export async function fetchAllReservationCounts() {
     supabase.from('reservations').select('id', { count: 'exact', head: true }).eq('status', 'NOT CONFIRMED'),
     supabase.from('reservations').select('id', { count: 'exact', head: true }).eq('status', 'CANCELLED'),
   ])
+  console.log(`[v0] pageData route=/supplier/confirm step=fetchAllReservationCounts duration=${Date.now() - t0}ms`)
 
   return {
     waiting: waiting.count || 0,

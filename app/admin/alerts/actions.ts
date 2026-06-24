@@ -515,6 +515,7 @@ export async function fetchMinimumParticipantAlerts(filters?: {
   status?: string
   alert_stage?: string
 }) {
+  const t0 = Date.now()
   const supabase = await createClient()
 
   try {
@@ -533,6 +534,7 @@ export async function fetchMinimumParticipantAlerts(filters?: {
     // All tour dates in the window (with tour name). We intentionally do NOT filter
     // is_open / supplier_status here so that history rows for cancelled dates can
     // still be shown; open/upcoming filtering for LIVE issues happens in code below.
+    const tDates = Date.now()
     const { data: windowDates, error: tdError } = await supabase
       .from('tour_dates')
       .select('id, tour_date, is_open, supplier_status, tour:tours(id, name)')
@@ -540,6 +542,7 @@ export async function fetchMinimumParticipantAlerts(filters?: {
       .lte('tour_date', endStr)
       .order('tour_date', { ascending: true })
       .limit(500)
+    console.log(`[v0] pageData route=/admin/minimum-participants step=fetchTourDatesWindow duration=${Date.now() - tDates}ms`)
 
     if (tdError) {
       console.error('Error fetching tour dates:', tdError)
@@ -553,11 +556,13 @@ export async function fetchMinimumParticipantAlerts(filters?: {
     }
 
     // Existing alert rows for these tour dates: used for status / decisions / history.
+    const tAlerts = Date.now()
     const { data: alertRows, error: arError } = await supabase
       .from('minimum_participant_alerts')
       .select('*')
       .in('tour_date_id', windowIds)
       .order('created_at', { ascending: false })
+    console.log(`[v0] pageData route=/admin/minimum-participants step=fetchAlertRows duration=${Date.now() - tAlerts}ms`)
 
     if (arError) {
       console.error('Error fetching alert rows:', arError)
@@ -730,6 +735,7 @@ export async function fetchMinimumParticipantAlerts(filters?: {
     console.log('[v0] MinParticipants INCLUDED:', debugIncluded)
     console.log('[v0] MinParticipants EXCLUDED:', debugExcluded)
 
+    console.log(`[v0] pageData route=/admin/minimum-participants step=fetchMinimumParticipantAlerts total=${Date.now() - t0}ms`)
     return { alerts: out, error: null }
   } catch (err) {
     console.error('[v0] fetchMinimumParticipantAlerts failed:', err)

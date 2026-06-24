@@ -6,6 +6,7 @@ import { createEmailLog } from '@/lib/email-log'
 import { syncMinimumParticipantsForTourDate } from '@/app/admin/alerts/actions'
 
 export async function fetchActiveTours() {
+  const t0 = Date.now()
   const supabase = await createClient()
   
   const { data, error } = await supabase
@@ -14,6 +15,7 @@ export async function fetchActiveTours() {
     .eq('active', true)
     .order('name')
 
+  console.log(`[v0] pageData route=/booking step=fetchActiveTours duration=${Date.now() - t0}ms`)
   return {
     tours: data || [],
     error: error?.message || null
@@ -22,6 +24,7 @@ export async function fetchActiveTours() {
 
 // Active agents for the booking form's Agent dropdown.
 export async function fetchActiveAgents() {
+  const t0 = Date.now()
   const supabase = await createClient()
 
   const { data, error } = await supabase
@@ -31,6 +34,7 @@ export async function fetchActiveAgents() {
     .eq('active', true)
     .order('full_name', { ascending: true })
 
+  console.log(`[v0] pageData route=/booking step=fetchActiveAgents duration=${Date.now() - t0}ms`)
   return {
     agents: data || [],
     error: error?.message || null,
@@ -108,6 +112,7 @@ async function getActiveParticipantsByDate(
 
 // Fetch tour dates for a specific month - includes closed/full dates for calendar display
 export async function fetchTourDatesForCalendar(tourId: string, year: number, month: number) {
+  const t0 = Date.now()
   const supabase = await createClient()
   
   // Get tour's max_capacity (default to 8 if missing)
@@ -158,6 +163,7 @@ export async function fetchTourDatesForCalendar(tourId: string, year: number, mo
     }
   })
 
+  console.log(`[v0] pageData route=/booking step=fetchTourDatesForCalendar duration=${Date.now() - t0}ms`)
   return { calendarDates, maxCapacity, error: null }
 }
 
