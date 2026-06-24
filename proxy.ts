@@ -27,7 +27,10 @@ export async function proxy(request: NextRequest) {
   })
 
   // Calling getUser() triggers the token refresh if needed.
-  await supabase.auth.getUser()
+  // Store the result to avoid a second round-trip below.
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
 
   // Redirect unauthenticated users away from protected routes to /login.
   const { pathname } = request.nextUrl
@@ -37,10 +40,6 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith('/availability') ||
     pathname.startsWith('/supplier')
   const isLoginPage = pathname === '/login'
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
 
   if (isProtected && !user) {
     const loginUrl = new URL('/login', request.url)

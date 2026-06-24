@@ -40,6 +40,7 @@ export function AdminSidebarInner({ navItems, user }: AdminSidebarInnerProps) {
           <Link
             key={item.href}
             href={item.href}
+            prefetch={false}
             className={cn(
               'px-3 py-2 rounded-md text-sm font-medium transition-colors',
               pathname === item.href
