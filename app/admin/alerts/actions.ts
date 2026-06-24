@@ -1,6 +1,7 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/service'
 import { revalidatePath } from 'next/cache'
 import { createEmailLog } from '@/lib/email-log'
 import { getCurrentUser } from '@/lib/auth'
@@ -2136,7 +2137,10 @@ export async function syncMinimumParticipantsForTourDate(
 ): Promise<{ success: boolean; error?: string }> {
   try {
     if (!tourDateId) return { success: false, error: 'Missing tourDateId' }
-    const supabase = await createClient()
+    // Use service role client so this system-level sync always succeeds
+    // regardless of the calling user's session permissions. RLS is bypassed
+    // intentionally here — the calling server actions enforce their own guards.
+    const supabase = createServiceClient()
     const { data: td, error } = await supabase
       .from('tour_dates')
       .select('id, tour_date, is_open, supplier_status, tour:tours(id, name)')
