@@ -69,12 +69,59 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
       hdrs.get('referer') ??
       'unknown'
 
-    // Step 1: verify identity via session client (anon key + cookie).
+    // Step 1: verify identity.
+    //
+    // Primary path — getClaims() with ES256 JWK verification:
+    //   1. Reads the access_token from the session cookie (local, ~0ms)
+    //   2. Decodes the JWT header/payload (local, ~0ms)
+    //   3. Fetches the JWK from /.well-known/jwks.json and verifies the
+    //      ES256 signature via crypto.subtle (network on first call, then
+    //      cached for 10 minutes — effectively ~0ms after warm)
+    //   This project uses ES256 (confirmed via JWKS endpoint), so getClaims()
+    //   never falls back to a remote getUser() call.
+    //
+    // Fallback — getUser() remote call:
+    //   Used only if getClaims() errors (e.g. expired token, missing session,
+    //   or JWK fetch failure). getUser() re-verifies with the Supabase Auth
+    //   server and is the safe, authoritative path.
+    //
+    // Security: both paths produce a server-verified identity before any
+    // service-role DB query is executed. The service role client is never
+    // used without a confirmed email/id from one of these two paths.
+
     const tAuth = Date.now()
     const supabase = await createClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    console.log(`[v0] getCurrentUser auth.getUser: ${Date.now() - tAuth}ms callId=${callId} route=${route}`)
-    if (authError || !user?.email) return null
+
+    let userEmail: string | null = null
+    let authMethod = 'getClaims'
+
+    try {
+      const { data: claimsData, error: claimsError } = await supabase.auth.getClaims()
+      if (!claimsError && claimsData?.claims?.email) {
+        userEmail = claimsData.claims.email as string
+      } else {
+        // getClaims returned no email or errored — fall back to getUser()
+        authMethod = 'getUser-fallback'
+        const { data: { user }, error: getUserError } = await supabase.auth.getUser()
+        if (getUserError || !user?.email) {
+          console.log(`[v0] getCurrentUser auth failed: ${Date.now() - tAuth}ms method=${authMethod} callId=${callId} route=${route}`)
+          return null
+        }
+        userEmail = user.email
+      }
+    } catch {
+      // Unexpected error in getClaims — fall back to getUser()
+      authMethod = 'getUser-fallback'
+      const { data: { user }, error: getUserError } = await supabase.auth.getUser()
+      if (getUserError || !user?.email) {
+        console.log(`[v0] getCurrentUser auth failed: ${Date.now() - tAuth}ms method=${authMethod} callId=${callId} route=${route}`)
+        return null
+      }
+      userEmail = user.email
+    }
+
+    console.log(`[v0] getCurrentUser auth: ${Date.now() - tAuth}ms method=${authMethod} callId=${callId} route=${route}`)
+    if (!userEmail) return null
 
     // Step 2: read app_users via service role (bypasses RLS).
     const service = getServiceRoleClient()
@@ -83,7 +130,7 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
     const { data: appUser, error: userError } = await service
       .from('app_users')
       .select('id, full_name, email, role, active')
-      .ilike('email', user.email)
+      .ilike('email', userEmail)
       .maybeSingle()
     console.log(`[v0] getCurrentUser app_users query: ${Date.now() - tUsers}ms callId=${callId} route=${route}`)
 
