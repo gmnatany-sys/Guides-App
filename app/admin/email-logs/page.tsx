@@ -15,8 +15,11 @@ import {
 import { 
   fetchEmailLogs, 
   sendPendingEmailLogs, 
+  retryFailedEmails,
+  createAndSendMissingEmails,
   getPendingEmailCount
 } from './actions'
+import { getMyPermissions } from '@/app/actions/permissions'
 import type { EmailLog } from '@/lib/types'
 
 export default function EmailLogsPage() {
@@ -26,6 +29,7 @@ export default function EmailLogsPage() {
   const [pendingCount, setPendingCount] = useState(0)
   const [sending, setSending] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
+  const [canManage, setCanManage] = useState(false)
 
   const loadData = async () => {
     setLoading(true)
@@ -38,7 +42,6 @@ export default function EmailLogsPage() {
       setError(logsResult.error)
       setPendingCount(countResult.count)
     } catch (err) {
-      console.error('[v0] email-logs loadData failed:', err)
       setError(err instanceof Error ? err.message : 'Failed to load email logs.')
     } finally {
       setLoading(false)
@@ -57,14 +60,50 @@ export default function EmailLogsPage() {
         setMessage({ type: 'error', text: result.error || 'Failed to send emails.' })
       }
     } catch (err) {
-      console.error('[v0] email-logs handleSendPending failed:', err)
       setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Failed to send emails.' })
     } finally {
       setSending(false)
     }
   }
 
+  const handleRetryFailed = async () => {
+    setSending(true)
+    setMessage(null)
+    try {
+      const result = await retryFailedEmails()
+      if (result.success) {
+        setMessage({ type: 'success', text: `Retried: ${result.sent} sent, ${result.failed} failed.` })
+        loadData()
+      } else {
+        setMessage({ type: 'error', text: result.error || 'Failed to retry emails.' })
+      }
+    } catch (err) {
+      setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Failed to retry emails.' })
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const handleCreateMissing = async () => {
+    setSending(true)
+    setMessage(null)
+    try {
+      const result = await createAndSendMissingEmails()
+      if (result.success) {
+        setMessage({ type: 'success', text: `Created ${result.created}, sent ${result.sent}, failed ${result.failed}, skipped ${result.skipped}.` })
+        loadData()
+      } else {
+        setMessage({ type: 'error', text: result.error || 'Failed to create missing emails.' })
+      }
+    } catch (err) {
+      setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Failed to create missing emails.' })
+    } finally {
+      setSending(false)
+    }
+  }
+
   useEffect(() => {
+    getMyPermissions().then(perms => setCanManage(perms.includes('email_logs_manage_access')))
     loadData()
   }, [])
 
@@ -145,22 +184,42 @@ export default function EmailLogsPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {pendingCount > 0 && (
+          {canManage && (
             <>
-              <Button 
-                onClick={() => handleSendPending(true)} 
+              {pendingCount > 0 && (
+                <>
+                  <Button 
+                    onClick={() => handleSendPending(true)} 
+                    disabled={sending}
+                    variant="outline"
+                    className="border-blue-300 text-blue-700 hover:bg-blue-50"
+                  >
+                    {sending ? 'Sending...' : 'Send 1 (Test)'}
+                  </Button>
+                  <Button 
+                    onClick={() => handleSendPending(false)} 
+                    disabled={sending}
+                    className="bg-blue-600 hover:bg-blue-700"
+                  >
+                    {sending ? 'Sending...' : `Send All Pending (${pendingCount})`}
+                  </Button>
+                </>
+              )}
+              <Button
+                onClick={handleRetryFailed}
                 disabled={sending}
                 variant="outline"
-                className="border-blue-300 text-blue-700 hover:bg-blue-50"
+                className="border-orange-300 text-orange-700 hover:bg-orange-50"
               >
-                {sending ? 'Sending...' : 'Send 1 (Test)'}
+                {sending ? 'Working...' : 'Retry Failed'}
               </Button>
-              <Button 
-                onClick={() => handleSendPending(false)} 
+              <Button
+                onClick={handleCreateMissing}
                 disabled={sending}
-                className="bg-blue-600 hover:bg-blue-700"
+                variant="outline"
+                className="border-purple-300 text-purple-700 hover:bg-purple-50"
               >
-                {sending ? 'Sending...' : `Send All Pending (${pendingCount})`}
+                {sending ? 'Working...' : 'Create Missing'}
               </Button>
             </>
           )}
