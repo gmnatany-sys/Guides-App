@@ -28,9 +28,11 @@ export async function proxy(request: NextRequest) {
 
   // Calling getUser() triggers the token refresh if needed.
   // Store the result to avoid a second round-trip below.
+  const t0 = Date.now()
   const {
     data: { user },
   } = await supabase.auth.getUser()
+  console.log(`[v0] proxy getUser: ${Date.now() - t0}ms — ${request.nextUrl.pathname}`)
 
   // Redirect unauthenticated users away from protected routes to /login.
   const { pathname } = request.nextUrl
@@ -56,7 +58,19 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
+  // Only run on real app routes that need auth protection or session refresh.
+  // Explicitly excludes:
+  //   - _next/static  (JS/CSS chunks, webpack bundles)
+  //   - _next/image   (image optimisation)
+  //   - _next/data    (RSC payload fetches – already protected at page level)
+  //   - /api          (API routes handle their own auth)
+  //   - favicon.ico, robots.txt, sitemap.xml
+  //   - any static file extension (images, fonts, audio, video, wasm, json, xml, txt)
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/login',
+    '/admin/:path*',
+    '/booking/:path*',
+    '/availability/:path*',
+    '/supplier/:path*',
   ],
 }
