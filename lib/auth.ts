@@ -16,69 +16,83 @@ export interface CurrentUser {
 }
 
 /**
- * Service-role client for server-only reads of app_users and user_permissions.
- * Bypasses RLS on these two tables — safe because:
- *   1. This module is 'use server' and never imported by client components.
- *   2. Identity is always verified first via supabase.auth.getUser() with the
- *      session client before this client is used.
+ * Service-role client singleton.
+ * Created once per cold start, never per-request. Safe because:
+ *   1. This module is 'use server' — never bundled into the client.
+ *   2. Identity is always verified first via supabase.auth.getUser().
  *   3. All queries are scoped to the verified user's email / id.
- * Never expose this client or its key to the browser.
+ * Avoids paying the createClient() constructor cost on every request.
  */
-function createServiceRoleClient() {
+let _serviceClient: ReturnType<typeof createServiceClient> | null = null
+function getServiceRoleClient() {
+  if (_serviceClient) return _serviceClient
   const url = normalizeSupabaseUrl(process.env.APP_SUPABASE_URL)
   const key = process.env.APP_SUPABASE_SERVICE_ROLE_KEY
   if (!key) throw new Error('APP_SUPABASE_SERVICE_ROLE_KEY is not set')
-  return createServiceClient(url, key, {
+  _serviceClient = createServiceClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
   })
+  return _serviceClient
 }
 
 /**
- * Returns the currently authenticated user with their enabled permissions,
- * or null if not logged in / not found in app_users / inactive.
- * Cached per request via React cache() so multiple callers in one render
- * do not fire redundant DB queries.
- *
- * auth.getUser() uses the session client (anon key + cookie) to verify identity.
- * app_users and user_permissions are read via the service role client to skip RLS.
+ * Resolve the current route for log context.
+ * Reads headers in priority order. Falls back to 'unknown'.
+ * Must be called outside of React.cache() to get the correct per-request value.
  */
-export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
+async function resolveRoute(): Promise<string> {
+  const hdrs = await headers()
+  return (
+    hdrs.get('x-invoke-path') ??
+    hdrs.get('x-forwarded-path') ??
+    hdrs.get('next-url') ??
+    hdrs.get('referer') ??
+    'unknown'
+  )
+}
+
+/**
+ * Cached inner implementation — keyed by route so cache() deduplicates
+ * within a single page render while still logging the correct route.
+ * Do not call this directly — use getCurrentUser() instead.
+ */
+const _getCurrentUserCached = cache(async (route: string, callId: string): Promise<CurrentUser | null> => {
   try {
     const t0 = Date.now()
 
-    // Resolve the current route path for log context.
-    // next/headers is available in RSC and server actions.
-    const hdrs = await headers()
-    const route = hdrs.get('x-invoke-path') ?? hdrs.get('next-url') ?? 'unknown'
+    console.log(`[v0] getCurrentUser START callId=${callId} route=${route}`)
 
     // Step 1: verify identity via session client (anon key + cookie).
+    const tAuth = Date.now()
     const supabase = await createClient()
     const { data: { user }, error: authError } = await supabase.auth.getUser()
-    console.log(`[v0] getCurrentUser auth.getUser: ${Date.now() - t0}ms — ${route}`)
+    console.log(`[v0] getCurrentUser auth.getUser: ${Date.now() - tAuth}ms callId=${callId} route=${route}`)
     if (authError || !user?.email) return null
 
-    // Step 2: read app_users and user_permissions via service role to skip RLS.
-    const service = createServiceRoleClient()
+    // Step 2: read app_users via service role (bypasses RLS).
+    const service = getServiceRoleClient()
 
-    const t1 = Date.now()
+    const tUsers = Date.now()
     const { data: appUser, error: userError } = await service
       .from('app_users')
       .select('id, full_name, email, role, active')
       .ilike('email', user.email)
       .maybeSingle()
-    console.log(`[v0] getCurrentUser app_users query: ${Date.now() - t1}ms — ${route}`)
+    console.log(`[v0] getCurrentUser app_users query: ${Date.now() - tUsers}ms callId=${callId} route=${route}`)
 
     if (userError || !appUser) return null
     if (!appUser.active) return null
 
-    const t2 = Date.now()
+    // Step 3: read user_permissions via service role (bypasses RLS).
+    const tPerms = Date.now()
     const { data: perms } = await service
       .from('user_permissions')
       .select('permission_key')
       .eq('user_id', appUser.id)
       .eq('enabled', true)
-    console.log(`[v0] getCurrentUser user_permissions query: ${Date.now() - t2}ms — ${route}`)
-    console.log(`[v0] getCurrentUser total: ${Date.now() - t0}ms — ${route}`)
+    console.log(`[v0] getCurrentUser user_permissions query: ${Date.now() - tPerms}ms callId=${callId} route=${route}`)
+
+    console.log(`[v0] getCurrentUser total: ${Date.now() - t0}ms callId=${callId} route=${route}`)
 
     return {
       id: appUser.id,
@@ -88,10 +102,23 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
       active: appUser.active,
       permissions: (perms ?? []).map((p) => p.permission_key),
     }
-  } catch {
+  } catch (err) {
+    console.log(`[v0] getCurrentUser ERROR: ${String(err)}`)
     return null
   }
 })
+
+/**
+ * Public entry point. Reads the route outside cache() so the label is always
+ * accurate for the current request, then delegates to the cached inner function.
+ * The callId is a short timestamp+random suffix — enough to correlate log lines
+ * from the same call and count how many times it fires per page load.
+ */
+export async function getCurrentUser(): Promise<CurrentUser | null> {
+  const route = await resolveRoute()
+  const callId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+  return _getCurrentUserCached(route, callId)
+}
 
 // Sync permission helpers live in lib/auth-utils.ts to avoid 'use server' conflicts.
 // Import { hasPermission, hasAnyPermission } from '@/lib/auth-utils' instead.
