@@ -2,6 +2,8 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
+import { getCurrentUser } from '@/lib/auth'
+import { hasPermission } from '@/lib/auth-utils'
 
 export interface AppUser {
   id: string
@@ -73,6 +75,10 @@ export async function fetchActiveAgents() {
 }
 
 export async function createAppUser(formData: FormData) {
+  const user = await getCurrentUser()
+  if (!hasPermission(user, 'users_manage_access')) {
+    return { success: false, error: 'Access denied' }
+  }
   const fullName = formData.get('full_name') as string
   const email = formData.get('email') as string
   const role = formData.get('role') as string
@@ -107,6 +113,10 @@ export async function createAppUser(formData: FormData) {
 }
 
 export async function updateAppUser(userId: string, formData: FormData) {
+  const user = await getCurrentUser()
+  if (!hasPermission(user, 'users_manage_access')) {
+    return { success: false, error: 'Access denied' }
+  }
   const fullName = formData.get('full_name') as string
   const email = formData.get('email') as string
   const role = formData.get('role') as string
@@ -145,6 +155,10 @@ export async function updateAppUser(userId: string, formData: FormData) {
 }
 
 export async function toggleUserActive(userId: string, active: boolean) {
+  const user = await getCurrentUser()
+  if (!hasPermission(user, 'users_manage_access')) {
+    return { success: false, error: 'Access denied' }
+  }
   const supabase = await createClient()
   
   const { error } = await supabase
@@ -161,6 +175,10 @@ export async function toggleUserActive(userId: string, active: boolean) {
 }
 
 export async function deleteAppUser(userId: string) {
+  const user = await getCurrentUser()
+  if (!hasPermission(user, 'users_manage_access')) {
+    return { success: false, error: 'Access denied' }
+  }
   const supabase = await createClient()
   
   // Check if user has any reservations
@@ -206,6 +224,10 @@ export async function fetchUserPermissions(userId: string) {
 }
 
 export async function updateUserPermission(userId: string, permissionKey: string, enabled: boolean) {
+  const user = await getCurrentUser()
+  if (!hasPermission(user, 'users_manage_access')) {
+    return { success: false, error: 'Access denied' }
+  }
   const supabase = await createClient()
   
   // Use upsert to create or update the permission
@@ -230,6 +252,10 @@ export async function updateUserPermission(userId: string, permissionKey: string
 }
 
 export async function bulkUpdateUserPermissions(userId: string, permissions: { key: string; enabled: boolean }[]) {
+  const user = await getCurrentUser()
+  if (!hasPermission(user, 'users_manage_access')) {
+    return { success: false, error: 'Access denied' }
+  }
   const supabase = await createClient()
   
   // Upsert all permissions at once
