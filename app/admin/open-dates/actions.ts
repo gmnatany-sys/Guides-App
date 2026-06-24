@@ -4,6 +4,8 @@ import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 import { Resend } from 'resend'
 import { syncMinimumParticipantsForTourDate } from '@/app/admin/alerts/actions'
+import { getCurrentUser } from '@/lib/auth'
+import { hasPermission } from '@/lib/auth-utils'
 
 // Email body generator for cancellation emails
 function getCancellationEmailBody(reservation: Record<string, unknown>, logoUrl?: string): { html: string, text: string } {
@@ -106,6 +108,10 @@ export async function fetchToursAndDates() {
 }
 
 export async function addOpenDate(formData: FormData) {
+  const user = await getCurrentUser()
+  if (!hasPermission(user, 'availability_calendar_manage_access')) {
+    return { success: false, error: 'Access denied' }
+  }
   const tourId = formData.get('tour_id') as string
   const tourDate = formData.get('tour_date') as string
   const isOpen = formData.get('is_open') === 'true'
@@ -131,6 +137,10 @@ export async function addOpenDate(formData: FormData) {
 }
 
 export async function upsertOpenDate(formData: FormData) {
+  const user = await getCurrentUser()
+  if (!hasPermission(user, 'availability_calendar_manage_access')) {
+    return { success: false, error: 'Access denied' }
+  }
   const tourId = formData.get('tour_id') as string
   const tourDate = formData.get('tour_date') as string
   const isOpen = formData.get('is_open') === 'true'
@@ -205,6 +215,10 @@ export async function fetchTourDatesForMonth(tourId: string, year: number, month
 
 // Bulk upsert dates - open selected dates
 export async function bulkOpenDates(tourId: string, dates: string[]) {
+  const user = await getCurrentUser()
+  if (!hasPermission(user, 'availability_calendar_manage_access')) {
+    return { success: false, error: 'Access denied', successCount: 0, errorCount: 0, message: 'Access denied' }
+  }
   const supabase = await createClient()
   
   let successCount = 0
@@ -273,6 +287,10 @@ export async function bulkOpenDates(tourId: string, dates: string[]) {
 
 // Bulk upsert dates - close selected dates
 export async function bulkCloseDates(tourId: string, dates: string[]) {
+  const user = await getCurrentUser()
+  if (!hasPermission(user, 'availability_calendar_manage_access')) {
+    return { success: false, error: 'Access denied', successCount: 0, errorCount: 0, message: 'Access denied' }
+  }
   const supabase = await createClient()
   
   let successCount = 0
@@ -341,6 +359,10 @@ export async function bulkCloseDates(tourId: string, dates: string[]) {
 
 // Cancel selected dates - sets is_open=false, supplier_status=CANCELLED, cancels reservations, sends emails immediately
 export async function cancelSelectedDates(tourId: string, dates: string[]) {
+  const user = await getCurrentUser()
+  if (!hasPermission(user, 'availability_calendar_manage_access')) {
+    return { success: false, error: 'Access denied', datesProcessed: 0, reservationsCancelled: 0, emailsSent: 0, emailsFailed: 0, errors: [], message: 'Access denied' }
+  }
   const supabase = await createClient()
   
   // Initialize Resend for sending emails
