@@ -36,31 +36,38 @@ function getServiceRoleClient() {
 }
 
 /**
- * Resolve the current route for log context.
- * Reads headers in priority order. Falls back to 'unknown'.
- * Must be called outside of React.cache() to get the correct per-request value.
+ * Returns the currently authenticated user with their enabled permissions,
+ * or null if not logged in / not found in app_users / inactive.
+ *
+ * Deduplication: React.cache() takes zero arguments so the cache key is
+ * stable — all callers within the same render scope share one result and
+ * fire exactly one set of DB queries.
+ *
+ * Logging: callId and route are generated inside the cached function.
+ * Because React.cache() deduplicates by reference identity (zero args),
+ * these are generated once per cache-fill, i.e. once per render scope.
+ * callId lets you correlate the four log lines for a single execution;
+ * route comes from headers() which is stable within one render scope.
+ *
+ * auth.getUser() uses the session client (anon key + cookie) for identity.
+ * app_users and user_permissions use the service role client to skip RLS.
  */
-async function resolveRoute(): Promise<string> {
-  const hdrs = await headers()
-  return (
-    hdrs.get('x-invoke-path') ??
-    hdrs.get('x-forwarded-path') ??
-    hdrs.get('next-url') ??
-    hdrs.get('referer') ??
-    'unknown'
-  )
-}
-
-/**
- * Cached inner implementation — keyed by route so cache() deduplicates
- * within a single page render while still logging the correct route.
- * Do not call this directly — use getCurrentUser() instead.
- */
-const _getCurrentUserCached = cache(async (route: string, callId: string): Promise<CurrentUser | null> => {
+export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   try {
     const t0 = Date.now()
 
-    console.log(`[v0] getCurrentUser START callId=${callId} route=${route}`)
+    // callId correlates log lines from one execution. Generated inside cache()
+    // so it is NOT part of the cache key — deduplication is unaffected.
+    const callId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+
+    // Route label for log context. headers() is stable within one render scope.
+    const hdrs = await headers()
+    const route =
+      hdrs.get('x-invoke-path') ??
+      hdrs.get('x-forwarded-path') ??
+      hdrs.get('next-url') ??
+      hdrs.get('referer') ??
+      'unknown'
 
     // Step 1: verify identity via session client (anon key + cookie).
     const tAuth = Date.now()
@@ -107,18 +114,6 @@ const _getCurrentUserCached = cache(async (route: string, callId: string): Promi
     return null
   }
 })
-
-/**
- * Public entry point. Reads the route outside cache() so the label is always
- * accurate for the current request, then delegates to the cached inner function.
- * The callId is a short timestamp+random suffix — enough to correlate log lines
- * from the same call and count how many times it fires per page load.
- */
-export async function getCurrentUser(): Promise<CurrentUser | null> {
-  const route = await resolveRoute()
-  const callId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
-  return _getCurrentUserCached(route, callId)
-}
 
 // Sync permission helpers live in lib/auth-utils.ts to avoid 'use server' conflicts.
 // Import { hasPermission, hasAnyPermission } from '@/lib/auth-utils' instead.
