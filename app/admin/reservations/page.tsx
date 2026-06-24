@@ -52,9 +52,13 @@ export default function ReservationsPage() {
   const [isPending, startTransition] = useTransition()
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'warning'; text: string } | null>(null)
   const [myPermissions, setMyPermissions] = useState<string[]>([])
+  const [permissionsLoaded, setPermissionsLoaded] = useState(false)
 
-  const canSearch = myPermissions.includes('reservations_search_access')
-  const canAction = myPermissions.includes('reservations_action_access')
+  // canAction must be false until permissions have fully loaded from the server.
+  // Rendering action buttons before load completes is the race condition that
+  // allowed Itai to cancel — default must never be permissive.
+  const canSearch = permissionsLoaded && myPermissions.includes('reservations_search_access')
+  const canAction = permissionsLoaded && myPermissions.includes('reservations_action_access')
 
   // Filters
   const [statusFilter, setStatusFilter] = useState('all')
@@ -79,7 +83,10 @@ export default function ReservationsPage() {
   }
 
   useEffect(() => {
-    getMyPermissions().then(setMyPermissions)
+    getMyPermissions().then((perms) => {
+      setMyPermissions(perms)
+      setPermissionsLoaded(true)
+    })
     loadData()
   }, [])
 
