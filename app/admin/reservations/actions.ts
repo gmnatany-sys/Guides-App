@@ -163,14 +163,9 @@ export async function markNotConfirmed(reservationId: string) {
 
 export async function cancelReservation(reservationId: string) {
   const user = await getCurrentUser()
-  const hasAccess = hasPermission(user, 'reservations_action_access')
-  console.log('[v0] cancelReservation attempted by:', user?.email ?? 'unauthenticated')
-  console.log('[v0] cancelReservation reservations_action_access =', hasAccess)
-  if (!hasAccess) {
-    console.log('[v0] cancelReservation denied for:', user?.email ?? 'unauthenticated')
+  if (!hasPermission(user, 'reservations_action_access')) {
     return { success: false, error: 'Access denied' }
   }
-  console.log('[v0] cancelReservation allowed for:', user?.email)
   try {
     const supabase = await createClient()
 
