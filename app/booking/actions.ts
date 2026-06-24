@@ -4,6 +4,8 @@ import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 import { createEmailLog } from '@/lib/email-log'
 import { syncMinimumParticipantsForTourDate } from '@/app/admin/alerts/actions'
+import { getCurrentUser } from '@/lib/auth'
+import { hasPermission } from '@/lib/auth-utils'
 
 export async function fetchActiveTours() {
   const supabase = await createClient()
@@ -162,6 +164,10 @@ export async function fetchTourDatesForCalendar(tourId: string, year: number, mo
 }
 
 export async function submitBooking(formData: FormData) {
+  const user = await getCurrentUser()
+  if (!hasPermission(user, 'booking_form_access')) {
+    return { success: false, error: 'Access denied' }
+  }
   const tourId = formData.get('tour_id') as string
   const tourDateId = formData.get('tour_date_id') as string
   const reservationNumber = formData.get('reservation_number') as string
