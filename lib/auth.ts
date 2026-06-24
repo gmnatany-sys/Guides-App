@@ -123,37 +123,77 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
     console.log(`[v0] getCurrentUser auth: ${Date.now() - tAuth}ms method=${authMethod} callId=${callId} route=${route}`)
     if (!userEmail) return null
 
-    // Step 2: read app_users via service role (bypasses RLS).
+    // Step 2: single round trip — app_users joined with user_permissions.
+    //
+    // PostgREST resolves the nested select via the FK relationship
+    // user_permissions.user_id → app_users.id and executes it as one
+    // SQL query (a lateral join), not two separate network calls.
+    // The enabled=true filter is applied server-side inside the same query.
+    //
+    // If the FK relationship is not introspected by PostgREST (e.g. missing
+    // FK constraint in the schema), the nested select returns an error and
+    // we fall back to two sequential queries.
     const service = getServiceRoleClient()
+    const tDB = Date.now()
 
-    const tUsers = Date.now()
     const { data: appUser, error: userError } = await service
+      .from('app_users')
+      .select('id, full_name, email, role, active, user_permissions!user_permissions_user_id_fkey(permission_key)')
+      .ilike('email', userEmail)
+      .eq('user_permissions.enabled', true)
+      .maybeSingle()
+
+    // If the nested select worked, user_permissions is an array on appUser.
+    // If PostgREST could not resolve the relationship, fall back to two queries.
+    const nestedPerms = Array.isArray((appUser as any)?.user_permissions)
+      ? (appUser as any).user_permissions
+      : null
+
+    if (!userError && appUser && nestedPerms !== null) {
+      // Single round trip succeeded.
+      console.log(`[v0] getCurrentUser db (1 round trip): ${Date.now() - tDB}ms callId=${callId} route=${route}`)
+      console.log(`[v0] getCurrentUser total: ${Date.now() - t0}ms callId=${callId} route=${route}`)
+
+      if (!appUser.active) return null
+
+      return {
+        id: appUser.id,
+        full_name: appUser.full_name,
+        email: appUser.email,
+        role: appUser.role,
+        active: appUser.active,
+        permissions: nestedPerms.map((p: { permission_key: string }) => p.permission_key),
+      }
+    }
+
+    // Fallback: nested select failed (relationship not available) — two queries.
+    console.log(`[v0] getCurrentUser nested select unavailable, falling back to 2 queries callId=${callId} route=${route}`)
+
+    const { data: appUserFb, error: userErrorFb } = await service
       .from('app_users')
       .select('id, full_name, email, role, active')
       .ilike('email', userEmail)
       .maybeSingle()
-    console.log(`[v0] getCurrentUser app_users query: ${Date.now() - tUsers}ms callId=${callId} route=${route}`)
+    console.log(`[v0] getCurrentUser app_users query: ${Date.now() - tDB}ms callId=${callId} route=${route}`)
 
-    if (userError || !appUser) return null
-    if (!appUser.active) return null
+    if (userErrorFb || !appUserFb) return null
+    if (!appUserFb.active) return null
 
-    // Step 3: read user_permissions via service role (bypasses RLS).
     const tPerms = Date.now()
     const { data: perms } = await service
       .from('user_permissions')
       .select('permission_key')
-      .eq('user_id', appUser.id)
+      .eq('user_id', appUserFb.id)
       .eq('enabled', true)
     console.log(`[v0] getCurrentUser user_permissions query: ${Date.now() - tPerms}ms callId=${callId} route=${route}`)
-
     console.log(`[v0] getCurrentUser total: ${Date.now() - t0}ms callId=${callId} route=${route}`)
 
     return {
-      id: appUser.id,
-      full_name: appUser.full_name,
-      email: appUser.email,
-      role: appUser.role,
-      active: appUser.active,
+      id: appUserFb.id,
+      full_name: appUserFb.full_name,
+      email: appUserFb.email,
+      role: appUserFb.role,
+      active: appUserFb.active,
       permissions: (perms ?? []).map((p) => p.permission_key),
     }
   } catch (err) {
