@@ -3,6 +3,8 @@
 import { createClient } from '@/lib/supabase/server'
 import { Resend } from 'resend'
 import { createEmailLog } from '@/lib/email-log'
+import { getCurrentUser } from '@/lib/auth'
+import { hasPermission } from '@/lib/auth-utils'
 import type {
   CriticalEmailType,
   SafetyCheckResult,
@@ -488,6 +490,10 @@ export async function checkMissingCriticalEmails(): Promise<SafetyCheckResult> {
 
 // Create & send only the missing required emails, avoiding duplicates.
 export async function createAndSendMissingEmails(): Promise<CreateMissingResult> {
+  const user = await getCurrentUser()
+  if (!hasPermission(user, 'email_logs_manage_access')) {
+    return { success: false, error: 'Access denied', created: 0, sent: 0, failed: 0, skipped: 0, errors: [] }
+  }
   const supabase = await createClient()
 
   const result: CreateMissingResult = {
@@ -640,6 +646,10 @@ export async function createAndSendMissingEmails(): Promise<CreateMissingResult>
 }
 
 export async function sendPendingEmailLogs(testMode: boolean = false) {
+  const user = await getCurrentUser()
+  if (!hasPermission(user, 'email_logs_manage_access')) {
+    return { success: false, error: 'Access denied', sent: 0, failed: 0 }
+  }
   const supabase = await createClient()
 
   const resendApiKey = process.env.RESEND_API_KEY
@@ -742,6 +752,10 @@ export async function sendPendingEmailLogs(testMode: boolean = false) {
 
 // Retry all FAILED email logs by re-sending them via Resend.
 export async function retryFailedEmails() {
+  const user = await getCurrentUser()
+  if (!hasPermission(user, 'email_logs_manage_access')) {
+    return { success: false, error: 'Access denied', sent: 0, failed: 0 }
+  }
   const supabase = await createClient()
 
   const resendApiKey = process.env.RESEND_API_KEY

@@ -68,6 +68,7 @@ const PERMISSION_GROUPS = [
     section: 'Email',
     permissions: [
       { key: 'email_logs_view_access', label: 'Can view Email Logs' },
+      { key: 'email_logs_manage_access', label: 'Can manage Email Logs' },
     ]
   },
   {

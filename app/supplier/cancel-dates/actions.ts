@@ -65,6 +65,19 @@ export async function fetchRecentlyCancelledDates(limit: number = 10) {
 }
 
 export async function cancelSelectedDates(tourId: string, dates: string[], cancellationNotes: string) {
+  // This page has been deprecated. All cancellation management is now handled
+  // through the Availability Calendar (/admin/open-dates).
+  return {
+    success: false,
+    error: 'This page has been replaced by the Availability Calendar.',
+    datesProcessed: 0,
+    reservationsCancelled: 0,
+    emailLogsCreated: 0,
+    errors: [],
+    message: 'This page has been replaced by the Availability Calendar.'
+  }
+
+  // The code below is intentionally unreachable.
   const supabase = await createClient()
   
   let datesProcessed = 0

@@ -24,6 +24,11 @@ export async function fetchToursAndRecentDates() {
 }
 
 export async function submitSupplierAvailability(formData: FormData) {
+  // This page has been deprecated. All availability management is now handled
+  // through the Availability Calendar (/admin/open-dates).
+  return { success: false, error: 'This page has been replaced by the Availability Calendar.' }
+
+  // The code below is intentionally unreachable.
   const tourId = formData.get('tour_id') as string
   const tourDate = formData.get('tour_date') as string
   const status = formData.get('status') as string
