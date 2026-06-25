@@ -3,6 +3,8 @@
 import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 import { createEmailLog } from '@/lib/email-log'
+import { getCurrentUser } from '@/lib/auth'
+import { hasPermission } from '@/lib/auth-utils'
 
 const MIN_PARTICIPANTS_CANCEL_MESSAGE = 'The tour was cancelled because the minimum number of participants was not reached.'
 
@@ -936,6 +938,11 @@ export async function fetchMinimumParticipantCandidates(): Promise<{
 }
 
 export async function resolveAlert(alertId: string, decision: 'KEEP_TOUR' | 'CANCEL_TOUR', notes?: string) {
+  const actor = await getCurrentUser()
+  if (!hasPermission(actor, 'minimum_participants_action_access')) {
+    return { success: false, error: 'Permission denied.' }
+  }
+
   const supabase = await createClient()
   
   // Get the alert details first
@@ -2213,6 +2220,11 @@ export async function resolveAlertForTourDate(
   decision: 'KEEP_TOUR' | 'CANCEL_TOUR',
   notes?: string
 ) {
+  const actor = await getCurrentUser()
+  if (!hasPermission(actor, 'minimum_participants_action_access')) {
+    return { success: false, error: 'Permission denied.' }
+  }
+
   const supabase = await createClient()
 
   // Ensure an alert row exists for this tour date.
