@@ -2,6 +2,8 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
+import { getCurrentUser } from '@/lib/auth'
+import { getServiceRoleClient, findAuthUserByEmail } from '@/lib/supabase-admin'
 
 export interface AppUser {
   id: string
@@ -253,4 +255,62 @@ export async function bulkUpdateUserPermissions(userId: string, permissions: { k
   
   revalidatePath('/admin/users')
   return { success: true }
+}
+
+/**
+ * Sets the Supabase Auth password for a given app_users row.
+ *
+ * Security:
+ *   - Re-verifies users_manage_access server-side (belt-and-suspenders over the layout gate).
+ *   - Uses the service-role Admin Auth API — no current password required or exposed.
+ *   - Password is never stored in app_users or any application table.
+ *   - auth.admin.getUserByEmail() does not exist in @supabase/auth-js 2.107.0;
+ *     findAuthUserByEmail() uses paginated listUsers() instead.
+ */
+export async function adminSetUserPassword(
+  userId: string,
+  newPassword: string,
+): Promise<{ success: boolean; error: string | null }> {
+  // 1. Server-side permission check
+  const actor = await getCurrentUser()
+  if (!actor || !actor.permissions.includes('users_manage_access')) {
+    return { success: false, error: 'Unauthorized.' }
+  }
+
+  // 2. Validate inputs
+  if (!userId?.trim()) return { success: false, error: 'Invalid user ID.' }
+  if (!newPassword || newPassword.length < 8) {
+    return { success: false, error: 'Password must be at least 8 characters.' }
+  }
+
+  // 3. Look up target app_users row to get email
+  const service = getServiceRoleClient()
+  const { data: targetUser, error: userErr } = await service
+    .from('app_users')
+    .select('email, full_name')
+    .eq('id', userId)
+    .single()
+
+  if (userErr || !targetUser?.email) {
+    return { success: false, error: 'User not found.' }
+  }
+
+  // 4. Find the Supabase Auth account by email (paginated — no getUserByEmail in this SDK version)
+  const { user: authUser, error: findErr } = await findAuthUserByEmail(targetUser.email)
+  if (findErr) return { success: false, error: findErr }
+  if (!authUser) {
+    return {
+      success: false,
+      error: 'No Supabase Auth account found for this email. The user must sign in or be invited first.',
+    }
+  }
+
+  // 5. Update password via Admin Auth API — password is never stored in app data
+  const { error: updateErr } = await service.auth.admin.updateUserById(authUser.id, {
+    password: newPassword,
+  })
+  if (updateErr) return { success: false, error: updateErr.message }
+
+  console.log(`[v0] adminSetUserPassword: actor=${actor.id} target=${userId} email=${targetUser.email}`)
+  return { success: true, error: null }
 }

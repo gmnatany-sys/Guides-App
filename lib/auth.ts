@@ -3,8 +3,7 @@
 import { cache } from 'react'
 import { headers } from 'next/headers'
 import { createClient } from '@/lib/supabase/server'
-import { createClient as createServiceClient } from '@supabase/supabase-js'
-import { normalizeSupabaseUrl } from '@/lib/supabase/url'
+import { getServiceRoleClient } from '@/lib/supabase-admin'
 
 export interface CurrentUser {
   id: string
@@ -13,26 +12,6 @@ export interface CurrentUser {
   role: 'admin' | 'operation' | 'agent' | 'supplier'
   active: boolean
   permissions: string[]
-}
-
-/**
- * Service-role client singleton.
- * Created once per cold start, never per-request. Safe because:
- *   1. This module is 'use server' — never bundled into the client.
- *   2. Identity is always verified first via supabase.auth.getUser().
- *   3. All queries are scoped to the verified user's email / id.
- * Avoids paying the createClient() constructor cost on every request.
- */
-let _serviceClient: ReturnType<typeof createServiceClient> | null = null
-function getServiceRoleClient() {
-  if (_serviceClient) return _serviceClient
-  const url = normalizeSupabaseUrl(process.env.APP_SUPABASE_URL)
-  const key = process.env.APP_SUPABASE_SERVICE_ROLE_KEY
-  if (!key) throw new Error('APP_SUPABASE_SERVICE_ROLE_KEY is not set')
-  _serviceClient = createServiceClient(url, key, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  })
-  return _serviceClient
 }
 
 /**
