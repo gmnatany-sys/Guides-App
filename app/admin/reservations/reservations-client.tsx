@@ -66,7 +66,7 @@ function StatusBadge({ status }: { status: string }) {
   const label: Record<string, string> = {
     'WAITING FOR CONFIRMATION': 'Waiting',
     'CONFIRMED': 'Confirmed',
-    'NOT CONFIRMED': 'Not Conf.',
+    'NOT CONFIRMED': 'Not Confirmed',
     'CANCELLED': 'Cancelled',
   }
   return (
@@ -482,44 +482,7 @@ export default function ReservationsClient({ initialPermissions }: Props) {
               <DetailRow label="Internal Notes" value={selectedRes.internal_notes || '-'} />
             </div>
           )}
-          {/* Actions inside popup */}
-          {selectedRes && canAction && (
-            <div className="flex gap-2 pt-3 border-t border-border">
-              {selectedRes.status === 'WAITING FOR CONFIRMATION' && (
-                <>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="text-green-600 hover:text-green-700 hover:bg-green-50"
-                    onClick={() => { handleConfirm(selectedRes.id); setSelectedRes(null) }}
-                    disabled={isPending}
-                  >
-                    Confirm
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="text-orange-600 hover:text-orange-700 hover:bg-orange-50"
-                    onClick={() => { handleNotConfirmed(selectedRes.id); setSelectedRes(null) }}
-                    disabled={isPending}
-                  >
-                    Not Confirmed
-                  </Button>
-                </>
-              )}
-              {selectedRes.status !== 'CANCELLED' && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                  onClick={() => { handleCancel(selectedRes.id); setSelectedRes(null) }}
-                  disabled={isPending}
-                >
-                  Cancel
-                </Button>
-              )}
-            </div>
-          )}
+          {/* Actions are in the table row only — not duplicated here */}
         </DialogContent>
       </Dialog>
     </div>
