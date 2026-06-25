@@ -145,40 +145,43 @@ async function getActiveParticipantsByDate(
 export async function fetchTourDatesForCalendar(tourId: string, year: number, month: number) {
   const t0 = Date.now()
   const supabase = await createClient()
-  
-  // Get tour's max_capacity (default to 8 if missing)
-  const { data: tour } = await supabase
-    .from('tours')
-    .select('max_capacity')
-    .eq('id', tourId)
-    .single()
 
-  const maxCapacity = tour?.max_capacity || 8
-
-  // Build date range for the month
+  // Build date range for the month (pure JS, no DB call)
   const startDate = `${year}-${String(month).padStart(2, '0')}-01`
   const lastDay = new Date(year, month, 0).getDate()
   const endDate = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
 
-  // Get ALL tour_dates for this tour in the date range (open and closed)
-  const { data: tourDates, error: datesError } = await supabase
-    .from('tour_dates')
-    .select('id, tour_id, tour_date, is_open, supplier_status')
-    .eq('tour_id', tourId)
-    .gte('tour_date', startDate)
-    .lte('tour_date', endDate)
-    .order('tour_date', { ascending: true })
+  // Step 1 (parallel): tours.max_capacity and tour_dates for the month are
+  // independent — neither depends on the other's result. Fire together.
+  const tStep1 = Date.now()
+  const [tourResult, { data: tourDates, error: datesError }] = await Promise.all([
+    supabase
+      .from('tours')
+      .select('max_capacity')
+      .eq('id', tourId)
+      .single(),
+    supabase
+      .from('tour_dates')
+      .select('id, tour_id, tour_date, is_open, supplier_status')
+      .eq('tour_id', tourId)
+      .gte('tour_date', startDate)
+      .lte('tour_date', endDate)
+      .order('tour_date', { ascending: true }),
+  ])
+  const maxCapacity = tourResult.data?.max_capacity || 8
+  console.log(`[v0] pageData route=/booking step=fetchTourMaxCapacity+fetchCalendarTourDates parallel duration=${Date.now() - tStep1}ms`)
 
   if (datesError) {
     return { calendarDates: [], maxCapacity, error: datesError.message }
   }
 
-  // Single batched query: sum active participants for ALL dates in the month at once
-  // (avoids the previous N+1 query-per-date loop that made the calendar slow).
+  // Step 2: getActiveParticipantsByDate depends on tourDates ids — sequential.
+  const tStep2 = Date.now()
   const participantsByDate = await getActiveParticipantsByDate(
     supabase,
     (tourDates || []).map((td) => td.id)
   )
+  console.log(`[v0] pageData route=/booking step=fetchActiveParticipantsByDate duration=${Date.now() - tStep2}ms`)
 
   const calendarDates = (tourDates || []).map((td) => {
     const activeParticipants = participantsByDate.get(td.id) || 0
@@ -194,7 +197,7 @@ export async function fetchTourDatesForCalendar(tourId: string, year: number, mo
     }
   })
 
-  console.log(`[v0] pageData route=/booking step=fetchTourDatesForCalendar duration=${Date.now() - t0}ms`)
+  console.log(`[v0] pageData route=/booking step=fetchTourDatesForCalendar total=${Date.now() - t0}ms`)
   return { calendarDates, maxCapacity, error: null }
 }
 
