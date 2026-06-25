@@ -13,7 +13,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
-import { fetchActiveTours, fetchActiveAgents, fetchTourDatesForCalendar, submitBooking } from './actions'
+import { fetchBookingInitialData, fetchTourDatesForCalendar, submitBooking } from './actions'
 import type { Tour } from '@/lib/types'
 
 interface CalendarDate {
@@ -60,30 +60,19 @@ export default function BookingPage() {
     return { year: now.getFullYear(), month: now.getMonth() + 1 }
   })
 
-  // Load active tours on mount
+  // Load active tours and agents in a single server action on mount.
+  // One Supabase client, two parallel queries, one network round trip.
   useEffect(() => {
-    async function loadTours() {
+    async function loadInitialData() {
       try {
-        const { tours: data } = await fetchActiveTours()
-        setTours(data)
+        const { tours: toursData, agents: agentsData } = await fetchBookingInitialData()
+        setTours(toursData)
+        setAgents(agentsData)
       } catch (err) {
-        console.error('[v0] booking loadTours failed:', err)
+        console.error('[v0] booking loadInitialData failed:', err)
       }
     }
-    loadTours()
-  }, [])
-
-  // Load active agents on mount
-  useEffect(() => {
-    async function loadAgents() {
-      try {
-        const { agents: data } = await fetchActiveAgents()
-        setAgents(data)
-      } catch (err) {
-        console.error('[v0] booking loadAgents failed:', err)
-      }
-    }
-    loadAgents()
+    loadInitialData()
   }, [])
 
   // Load calendar dates when tour or month changes

@@ -568,9 +568,11 @@ export async function fetchMinimumParticipantAlerts(filters?: {
     const startStr = windowStart.toISOString().split('T')[0]
     const endStr = windowEnd.toISOString().split('T')[0]
 
-    // All tour dates in the window (with tour name). We intentionally do NOT filter
-    // is_open / supplier_status here so that history rows for cancelled dates can
-    // still be shown; open/upcoming filtering for LIVE issues happens in code below.
+    // Step 1: fetch tour_dates window.
+    // Step 1+2 note: we cannot parallelise tour_dates and minimum_participant_alerts
+    // at this point because minimum_participant_alerts needs windowIds from tour_dates.
+    // However we CAN start minimum_participant_alerts immediately after tour_dates
+    // resolves, overlapping it with getActiveReservationStatsMap (step 3) below.
     const tDates = Date.now()
     const { data: windowDates, error: tdError } = await supabase
       .from('tour_dates')
@@ -592,14 +594,22 @@ export async function fetchMinimumParticipantAlerts(filters?: {
       return { alerts: [], error: null }
     }
 
-    // Existing alert rows for these tour dates: used for status / decisions / history.
-    const tAlerts = Date.now()
-    const { data: alertRows, error: arError } = await supabase
-      .from('minimum_participant_alerts')
-      .select('*')
-      .in('tour_date_id', windowIds)
-      .order('created_at', { ascending: false })
-    console.log(`[v0] pageData route=/admin/minimum-participants step=fetchAlertRows duration=${Date.now() - tAlerts}ms`)
+    // Steps 2 and 3 are independent of each other — fire in parallel.
+    // Step 2: existing alert rows for these tour dates (status / decisions / history).
+    // Step 3: active reservation counts + latest reservation time per date.
+    const tParallel = Date.now()
+    const [
+      { data: alertRows, error: arError },
+      { activeParticipantsMap: liveMap, latestActiveReservationMap: latestActiveMap },
+    ] = await Promise.all([
+      supabase
+        .from('minimum_participant_alerts')
+        .select('*')
+        .in('tour_date_id', windowIds)
+        .order('created_at', { ascending: false }),
+      getActiveReservationStatsMap(supabase, windowIds),
+    ])
+    console.log(`[v0] pageData route=/admin/minimum-participants step=alertRows+statsMap parallel duration=${Date.now() - tParallel}ms`)
 
     if (arError) {
       console.error('Error fetching alert rows:', arError)
@@ -612,12 +622,6 @@ export async function fetchMinimumParticipantAlerts(filters?: {
       list.push(r)
       alertsByTd.set(r.tour_date_id, list)
     }
-
-    // Single round trip: fetch active reservations once and derive both maps.
-    const tStats = Date.now()
-    const { activeParticipantsMap: liveMap, latestActiveReservationMap: latestActiveMap } =
-      await getActiveReservationStatsMap(supabase, windowIds)
-    console.log(`[v0] pageData route=/admin/minimum-participants step=getActiveReservationStatsMap duration=${Date.now() - tStats}ms`)
 
     const merged: MinimumParticipantAlert[] = []
     const usedAlertIds = new Set<string>()

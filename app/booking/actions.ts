@@ -41,6 +41,37 @@ export async function fetchActiveAgents() {
   }
 }
 
+// Fetches active tours and active agents in a single server action using one
+// Supabase client connection. Replaces the two separate useEffect calls on the
+// booking page, halving connection round-trip overhead on initial mount.
+export async function fetchBookingInitialData() {
+  const t0 = Date.now()
+  const supabase = await createClient()
+
+  const [toursResult, agentsResult] = await Promise.all([
+    supabase
+      .from('tours')
+      .select('*')
+      .eq('active', true)
+      .order('name'),
+    supabase
+      .from('app_users')
+      .select('id, full_name, email')
+      .eq('role', 'agent')
+      .eq('active', true)
+      .order('full_name', { ascending: true }),
+  ])
+
+  console.log(`[v0] pageData route=/booking step=fetchBookingInitialData duration=${Date.now() - t0}ms`)
+
+  return {
+    tours: toursResult.data || [],
+    toursError: toursResult.error?.message || null,
+    agents: agentsResult.data || [],
+    agentsError: agentsResult.error?.message || null,
+  }
+}
+
 export async function fetchAvailableDates(tourId: string) {
   const supabase = await createClient()
   
