@@ -998,11 +998,11 @@ export default function MinimumParticipantsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Tour Date</TableHead>
-                    <TableHead>Tour Name</TableHead>
-                    <TableHead>Participants</TableHead>
-                    <TableHead>Days Left</TableHead>
-                    <TableHead>Alert Stage</TableHead>
+                    <TableHead className="w-[110px]">Tour Date</TableHead>
+                    <TableHead className="w-[160px] max-w-[160px]">Tour Name</TableHead>
+                    <TableHead className="w-[90px]">Participants</TableHead>
+                    <TableHead className="w-[70px]">Days Left</TableHead>
+                    <TableHead className="w-[120px]">Alert Stage</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Decision</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
@@ -1014,8 +1014,13 @@ export default function MinimumParticipantsPage() {
                       <TableCell>
                         <FormattedDate dateString={(alert.tour_date as any)?.tour_date || ''} />
                       </TableCell>
-                      <TableCell className="font-medium">
-                        {(alert.tour_date as any)?.tour?.name || 'Unknown Tour'}
+                      <TableCell
+                        className="font-medium max-w-[160px]"
+                        title={(alert.tour_date as any)?.tour?.name || 'Unknown Tour'}
+                      >
+                        <span className="block truncate">
+                          {(alert.tour_date as any)?.tour?.name || 'Unknown Tour'}
+                        </span>
                       </TableCell>
                       <TableCell>
                         <span className={alert.active_participants < alert.minimum_required ? 'text-red-600 font-medium' : ''}>
@@ -1028,11 +1033,11 @@ export default function MinimumParticipantsPage() {
                           getAlertStageBadge(liveDays)
                         ) : alert.status === 'CANCELLED' ? (
                           <Badge variant="outline" className="bg-red-100 text-red-800 border-red-300">
-                            Cancelled due to minimum participants
+                            Min. participants
                           </Badge>
                         ) : alert.status === 'KEPT' ? (
                           <Badge variant="outline" className="bg-green-100 text-green-800 border-green-300">
-                            Tour kept by supplier decision
+                            Supplier kept
                           </Badge>
                         ) : (
                           <span className="text-muted-foreground">-</span>
@@ -1123,9 +1128,9 @@ export default function MinimumParticipantsPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Tour Date</TableHead>
-                      <TableHead>Tour</TableHead>
-                      <TableHead>Participants</TableHead>
+                      <TableHead className="w-[110px]">Tour Date</TableHead>
+                      <TableHead className="w-[160px] max-w-[160px]">Tour</TableHead>
+                      <TableHead className="w-[90px]">Participants</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Decision</TableHead>
                       <TableHead>Decided At</TableHead>
@@ -1138,8 +1143,13 @@ export default function MinimumParticipantsPage() {
                         <TableCell>
                           <FormattedDate dateString={(alert.tour_date as any)?.tour_date || ''} />
                         </TableCell>
-                        <TableCell className="font-medium">
-                          {(alert.tour_date as any)?.tour?.name || 'Unknown Tour'}
+                        <TableCell
+                          className="font-medium max-w-[160px]"
+                          title={(alert.tour_date as any)?.tour?.name || 'Unknown Tour'}
+                        >
+                          <span className="block truncate">
+                            {(alert.tour_date as any)?.tour?.name || 'Unknown Tour'}
+                          </span>
                         </TableCell>
                         <TableCell>
                           {alert.active_participants} / {alert.minimum_required}
