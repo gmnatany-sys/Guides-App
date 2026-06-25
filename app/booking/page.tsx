@@ -16,6 +16,12 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { fetchBookingInitialData, fetchTourDatesForCalendar, submitBooking } from './actions'
 import type { Tour } from '@/lib/types'
 
+interface BookingClientProps {
+  currentUserId: string
+  currentUserRole: string
+  currentUserName: string
+}
+
 interface CalendarDate {
   id: string
   tour_id: string
@@ -32,10 +38,14 @@ interface Agent {
   email: string
 }
 
-export default function BookingPage() {
+function BookingClient({ currentUserId, currentUserRole, currentUserName }: BookingClientProps) {
+  const isAgent = currentUserRole === 'agent'
+
   const [tours, setTours] = useState<Tour[]>([])
   const [agents, setAgents] = useState<Agent[]>([])
-  const [selectedAgentId, setSelectedAgentId] = useState('')
+  // For agents: initialise to their own id immediately — no dropdown needed.
+  // For admin/operation: empty string, user must pick from dropdown.
+  const [selectedAgentId, setSelectedAgentId] = useState(isAgent ? currentUserId : '')
   const [selectedTourId, setSelectedTourId] = useState('')
   // Single source of truth for the chosen availability. We never store the
   // tour_date_id separately from the rest of the date info, so they cannot diverge.
@@ -165,7 +175,8 @@ export default function BookingPage() {
     
     // Client-side validation before submit
     const missingFields: string[] = []
-    if (!selectedAgentId) missingFields.push('Agent')
+    // Agents always have their own id pre-set — skip the agent check for them.
+    if (!isAgent && !selectedAgentId) missingFields.push('Agent')
     if (!selectedTourId) missingFields.push('Tour')
     if (!selectedDateInfo) missingFields.push('Available Date')
     if (!docketNumber.trim()) missingFields.push('Docket Number')
@@ -197,8 +208,8 @@ export default function BookingPage() {
 
         if (result.success) {
           setMessage({ type: 'success', text: 'Booking submitted successfully.' })
-          // Reset form state
-          setSelectedAgentId('')
+          // Reset form state. Agents keep their own id; others reset to empty.
+          setSelectedAgentId(isAgent ? currentUserId : '')
           setSelectedTourId('')
           setSelectedDateInfo(null)
           setCalendarDates([])
@@ -410,7 +421,9 @@ export default function BookingPage() {
         <div className="text-center space-y-2">
           <h1 className="text-2xl font-bold text-slate-900">Japan Tours Booking</h1>
           <p className="text-sm text-slate-600">
-            Book your tour by filling out the form below.
+            {isAgent
+              ? 'Submit a booking below.'
+              : 'Book your tour by filling out the form below.'}
           </p>
         </div>
 
@@ -435,34 +448,42 @@ export default function BookingPage() {
               {/* Hidden field for agent_user_id */}
               <input type="hidden" name="agent_user_id" value={selectedAgentId} />
 
-              {/* Agent Selection */}
+              {/* Agent — read-only for agents, dropdown for admin/operation */}
               <div className="space-y-2">
-                <Label htmlFor="agent_user_id" className="text-slate-700">
+                <Label className="text-slate-700">
                   Agent <span className="text-red-500">*</span>
                 </Label>
-                <Select
-                  value={selectedAgentId}
-                  onValueChange={(value) => setSelectedAgentId(value ?? '')}
-                  required
-                >
-                  <SelectTrigger className="bg-white">
-                    <SelectValue placeholder="Select an agent">
-                      {agents.find(a => a.id === selectedAgentId)?.full_name || 'Select an agent'}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {agents.length === 0 ? (
-                      <div className="px-2 py-1.5 text-sm text-slate-500">No active agents available.</div>
-                    ) : (
-                      agents.map((agent) => (
-                        <SelectItem key={agent.id} value={agent.id}>
-                          {agent.full_name}
-                        </SelectItem>
-                      ))
-                    )}
-                  </SelectContent>
-                </Select>
-                {formSubmitAttempted && !selectedAgentId && (
+                {isAgent ? (
+                  // Agent users always book under their own name.
+                  // The hidden input carries their id; the server also enforces this.
+                  <div className="flex items-center px-3 py-2 bg-slate-100 border border-slate-200 rounded-md text-sm text-slate-700">
+                    {currentUserName}
+                  </div>
+                ) : (
+                  <Select
+                    value={selectedAgentId}
+                    onValueChange={(value) => setSelectedAgentId(value ?? '')}
+                    required
+                  >
+                    <SelectTrigger className="bg-white">
+                      <SelectValue placeholder="Select an agent">
+                        {agents.find(a => a.id === selectedAgentId)?.full_name || 'Select an agent'}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {agents.length === 0 ? (
+                        <div className="px-2 py-1.5 text-sm text-slate-500">No active agents available.</div>
+                      ) : (
+                        agents.map((agent) => (
+                          <SelectItem key={agent.id} value={agent.id}>
+                            {agent.full_name}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                )}
+                {!isAgent && formSubmitAttempted && !selectedAgentId && (
                   <p className="text-sm text-red-600">Agent is required.</p>
                 )}
               </div>
@@ -622,8 +643,8 @@ export default function BookingPage() {
                 type="submit"
                 className="w-full"
                 disabled={
-                  isPending || 
-                  !selectedAgentId ||
+                  isPending ||
+                  (!isAgent && !selectedAgentId) ||
                   !selectedTourId || 
                   !selectedDateInfo || 
                   !docketNumber.trim() || 
@@ -643,5 +664,22 @@ export default function BookingPage() {
         </Card>
       </div>
     </div>
+  )
+}
+
+// ─── RSC wrapper ─────────────────────────────────────────────────────────────
+// Calls getCurrentUser() — deduplicated by React.cache() within the same render
+// as the layout (zero extra DB round trips). Passes identity props to BookingClient
+// so agents see a read-only name field and submit under their own id only.
+import { getCurrentUser } from '@/lib/auth'
+
+export default async function BookingPage() {
+  const user = await getCurrentUser()
+  return (
+    <BookingClient
+      currentUserId={user?.id ?? ''}
+      currentUserRole={user?.role ?? ''}
+      currentUserName={user?.full_name ?? ''}
+    />
   )
 }

@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 import { createEmailLog } from '@/lib/email-log'
 import { syncMinimumParticipantsForTourDate } from '@/app/admin/alerts/actions'
+import { getCurrentUser } from '@/lib/auth'
 
 export async function fetchActiveTours() {
   const t0 = Date.now()
@@ -209,7 +210,16 @@ export async function submitBooking(formData: FormData) {
   const leadPassengerName = formData.get('lead_passenger_name') as string
   const whatsappNumber = formData.get('whatsapp_number') as string
   const participants = parseInt(formData.get('participants') as string, 10)
-  const agentUserId = formData.get('agent_user_id') as string
+  let agentUserId = formData.get('agent_user_id') as string
+
+  // SERVER-SIDE AGENT ENFORCEMENT: if the caller is an agent, override
+  // whatever agent_user_id the client sent with the caller's own id.
+  // This ensures agents can only submit bookings under their own name,
+  // regardless of what the client-side form contains.
+  const actor = await getCurrentUser()
+  if (actor?.role === 'agent') {
+    agentUserId = actor.id
+  }
 
   // Validate ALL required fields
   const missingFields: string[] = []
