@@ -259,11 +259,13 @@ export async function bulkUpdateUserPermissions(userId: string, permissions: { k
 
 /**
  * Sets the Supabase Auth password for a given app_users row.
+ * If no matching Auth account exists, one is created automatically.
  *
  * Security:
  *   - Re-verifies users_manage_access server-side (belt-and-suspenders over the layout gate).
  *   - Uses the service-role Admin Auth API — no current password required or exposed.
  *   - Password is never stored in app_users or any application table.
+ *   - Password is never logged.
  *   - auth.admin.getUserByEmail() does not exist in @supabase/auth-js 2.107.0;
  *     findAuthUserByEmail() uses paginated listUsers() instead.
  */
@@ -298,19 +300,28 @@ export async function adminSetUserPassword(
   // 4. Find the Supabase Auth account by email (paginated — no getUserByEmail in this SDK version)
   const { user: authUser, error: findErr } = await findAuthUserByEmail(targetUser.email)
   if (findErr) return { success: false, error: findErr }
+
   if (!authUser) {
-    return {
-      success: false,
-      error: 'No Supabase Auth account found for this email. The user must sign in or be invited first.',
-    }
+    // 5a. No Auth account exists — create one with the provided password.
+    // email_confirm: true skips the confirmation email for admin-created accounts.
+    // Password is passed directly to the Auth API and never stored in app data.
+    const { error: createErr } = await service.auth.admin.createUser({
+      email: targetUser.email,
+      password: newPassword,
+      email_confirm: true,
+    })
+    if (createErr) return { success: false, error: createErr.message }
+    console.log(`[v0] adminSetUserPassword: actor=${actor.id} target=${userId} action=created_auth_account`)
+    return { success: true, error: null }
   }
 
-  // 5. Update password via Admin Auth API — password is never stored in app data
+  // 5b. Auth account exists — update the password.
+  // Password is passed directly to the Auth API and never stored in app data.
   const { error: updateErr } = await service.auth.admin.updateUserById(authUser.id, {
     password: newPassword,
   })
   if (updateErr) return { success: false, error: updateErr.message }
 
-  console.log(`[v0] adminSetUserPassword: actor=${actor.id} target=${userId} email=${targetUser.email}`)
+  console.log(`[v0] adminSetUserPassword: actor=${actor.id} target=${userId} action=updated_password`)
   return { success: true, error: null }
 }
