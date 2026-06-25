@@ -5,7 +5,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Badge } from '@/components/ui/badge'
 import {
   Select,
   SelectContent,
@@ -21,6 +20,12 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { 
   fetchReservations, 
   fetchTours, 
@@ -31,6 +36,26 @@ import {
 } from './actions'
 import type { Reservation, Tour } from '@/lib/types'
 
+// ── helpers ──────────────────────────────────────────────────────────────────
+
+function fmtDate(dateStr: string | null | undefined): string {
+  if (!dateStr) return '-'
+  return new Date(dateStr).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: '2-digit',
+  })
+}
+
+function fmtDateLong(dateStr: string | null | undefined): string {
+  if (!dateStr) return '-'
+  return new Date(dateStr).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
+}
+
 function StatusBadge({ status }: { status: string }) {
   const variants: Record<string, string> = {
     'WAITING FOR CONFIRMATION': 'bg-yellow-100 text-yellow-800',
@@ -38,16 +63,37 @@ function StatusBadge({ status }: { status: string }) {
     'NOT CONFIRMED': 'bg-orange-100 text-orange-800',
     'CANCELLED': 'bg-red-100 text-red-800',
   }
+  const label: Record<string, string> = {
+    'WAITING FOR CONFIRMATION': 'Waiting',
+    'CONFIRMED': 'Confirmed',
+    'NOT CONFIRMED': 'Not Conf.',
+    'CANCELLED': 'Cancelled',
+  }
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${variants[status] || 'bg-gray-100 text-gray-800'}`}>
-      {status}
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium whitespace-nowrap ${variants[status] || 'bg-gray-100 text-gray-800'}`}>
+      {label[status] ?? status}
     </span>
   )
 }
 
+// ── detail row helper ─────────────────────────────────────────────────────────
+
+function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex gap-2 py-1 border-b border-border/50 last:border-0">
+      <span className="w-36 shrink-0 text-xs text-muted-foreground font-medium">{label}</span>
+      <span className="text-sm text-foreground break-words">{value ?? '-'}</span>
+    </div>
+  )
+}
+
+// ── props ─────────────────────────────────────────────────────────────────────
+
 interface Props {
   initialPermissions: string[]
 }
+
+// ── main component ────────────────────────────────────────────────────────────
 
 export default function ReservationsClient({ initialPermissions }: Props) {
   const [reservations, setReservations] = useState<Reservation[]>([])
@@ -55,6 +101,7 @@ export default function ReservationsClient({ initialPermissions }: Props) {
   const [isPending, startTransition] = useTransition()
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'warning'; text: string } | null>(null)
   const [myPermissions] = useState<string[]>(initialPermissions)
+  const [selectedRes, setSelectedRes] = useState<Reservation | null>(null)
 
   const canSearch = myPermissions.includes('reservations_search_access')
   const canAction = myPermissions.includes('reservations_action_access')
@@ -87,16 +134,18 @@ export default function ReservationsClient({ initialPermissions }: Props) {
     loadData()
   }, [])
 
+  const currentFilters = (): ReservationFilters => ({
+    status: statusFilter,
+    tourId: tourFilter,
+    dateFrom,
+    dateTo,
+    search,
+  })
+
   const handleFilter = () => {
     startTransition(async () => {
       setMessage(null)
-      await loadData({
-        status: statusFilter,
-        tourId: tourFilter,
-        dateFrom,
-        dateTo,
-        search
-      })
+      await loadData(currentFilters())
     })
   }
 
@@ -118,13 +167,7 @@ export default function ReservationsClient({ initialPermissions }: Props) {
       const result = await confirmReservation(id)
       if (result.success) {
         setMessage({ type: 'success', text: `Reservation confirmed. Confirmation #: ${result.confirmationNumber}` })
-        await loadData({
-          status: statusFilter,
-          tourId: tourFilter,
-          dateFrom,
-          dateTo,
-          search
-        })
+        await loadData(currentFilters())
       } else {
         setMessage({ type: 'error', text: result.error || 'Failed to confirm' })
       }
@@ -137,13 +180,7 @@ export default function ReservationsClient({ initialPermissions }: Props) {
       const result = await markNotConfirmed(id)
       if (result.success) {
         setMessage({ type: 'success', text: 'Reservation marked as not confirmed.' })
-        await loadData({
-          status: statusFilter,
-          tourId: tourFilter,
-          dateFrom,
-          dateTo,
-          search
-        })
+        await loadData(currentFilters())
       } else {
         setMessage({ type: 'error', text: result.error || 'Failed to update' })
       }
@@ -168,15 +205,7 @@ export default function ReservationsClient({ initialPermissions }: Props) {
         console.error('[v0] handleCancel failed:', err)
         setMessage({ type: 'error', text: 'Failed to cancel reservation. Please try again.' })
       } finally {
-        // Always refresh the table so the row reflects the latest status and
-        // the Cancel action never stays stuck on "Processing".
-        await loadData({
-          status: statusFilter,
-          tourId: tourFilter,
-          dateFrom,
-          dateTo,
-          search
-        })
+        await loadData(currentFilters())
       }
     })
   }
@@ -244,27 +273,27 @@ export default function ReservationsClient({ initialPermissions }: Props) {
 
             <div className="space-y-2">
               <Label>Date From</Label>
-              <Input 
-                type="date" 
-                value={dateFrom} 
-                onChange={(e) => setDateFrom(e.target.value)} 
+              <Input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
               />
             </div>
 
             <div className="space-y-2">
               <Label>Date To</Label>
-              <Input 
-                type="date" 
-                value={dateTo} 
-                onChange={(e) => setDateTo(e.target.value)} 
+              <Input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
               />
             </div>
 
             <div className="space-y-2">
-              <Label>Search by docket, voucher, client name, or confirmation number</Label>
-              <Input 
-                placeholder={canSearch ? 'Enter search term...' : 'Search not permitted'}
-                value={search} 
+              <Label>Search</Label>
+              <Input
+                placeholder={canSearch ? 'Docket, voucher, name, conf#...' : 'Search not permitted'}
+                value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 disabled={!canSearch}
                 title={!canSearch ? 'You do not have search access.' : undefined}
@@ -288,117 +317,211 @@ export default function ReservationsClient({ initialPermissions }: Props) {
         <CardHeader>
           <CardTitle className="text-base">Reservations ({reservations.length})</CardTitle>
         </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
+        <CardContent className="p-0">
+          {/* No overflow-x-auto — table is designed to fit desktop width */}
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-20">Created</TableHead>
+                <TableHead className="w-20">Tour Date</TableHead>
+                <TableHead className="w-24">Docket</TableHead>
+                <TableHead className="w-24">Confirm.</TableHead>
+                <TableHead className="min-w-[140px]">Customer / Agent</TableHead>
+                <TableHead className="min-w-[120px] max-w-[180px]">Tour</TableHead>
+                <TableHead className="w-10 text-center">Pax</TableHead>
+                <TableHead className="w-24">Status</TableHead>
+                <TableHead className="w-32">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {reservations.length === 0 ? (
                 <TableRow>
-                  <TableHead>Created</TableHead>
-                  <TableHead>Res #</TableHead>
-                  <TableHead>Voucher</TableHead>
-                  <TableHead>Lead Passenger</TableHead>
-                  <TableHead>Agent Name</TableHead>
-                  <TableHead>Agent Email</TableHead>
-                  <TableHead>WhatsApp</TableHead>
-                  <TableHead>Tour</TableHead>
-                  <TableHead>Tour Date</TableHead>
-                  <TableHead>Pax</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Conf #</TableHead>
-                  <TableHead>Notes</TableHead>
-                  <TableHead>Actions</TableHead>
+                  <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
+                    No reservations found
+                  </TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {reservations.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={14} className="text-center text-muted-foreground py-8">
-                      No reservations found
+              ) : (
+                reservations.map((res) => (
+                  <TableRow
+                    key={res.id}
+                    className="cursor-pointer hover:bg-muted/50"
+                    onClick={(e) => {
+                      // Don't open popup when clicking action buttons
+                      if ((e.target as HTMLElement).closest('button')) return
+                      setSelectedRes(res)
+                    }}
+                  >
+                    {/* Created */}
+                    <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                      {fmtDate(res.created_at)}
                     </TableCell>
-                  </TableRow>
-                ) : (
-                  reservations.map((res) => (
-                    <TableRow key={res.id}>
-                      <TableCell className="whitespace-nowrap text-sm">
-                        {new Date(res.created_at).toLocaleDateString('en-US', {
-                          month: 'short',
-                          day: 'numeric',
-                          year: 'numeric'
-                        })}
-                      </TableCell>
-                      <TableCell className="font-mono text-sm">{res.reservation_number}</TableCell>
-                      <TableCell className="text-sm">{res.voucher_number || '-'}</TableCell>
-                      <TableCell className="text-sm">{res.lead_passenger_name}</TableCell>
-                      <TableCell className="text-sm">{res.agent_name || '-'}</TableCell>
-                      <TableCell className="text-sm">{res.agent_email || '-'}</TableCell>
-                      <TableCell className="text-sm">{res.whatsapp_number || '-'}</TableCell>
-                      <TableCell className="text-sm">{res.tours?.name || '-'}</TableCell>
-                      <TableCell className="whitespace-nowrap text-sm">
-                        {res.tour_dates?.tour_date 
-                          ? new Date(res.tour_dates.tour_date).toLocaleDateString('en-US', {
-                              month: 'short',
-                              day: 'numeric',
-                              year: 'numeric'
-                            })
-                          : '-'}
-                      </TableCell>
-                      <TableCell className="text-sm">{res.participants}</TableCell>
-                      <TableCell>
-                        <StatusBadge status={res.status} />
-                      </TableCell>
-                      <TableCell className="font-mono text-sm">{res.confirmation_number || '-'}</TableCell>
-                      <TableCell className="text-sm max-w-[150px] truncate">
-                        {res.internal_notes || '-'}
-                      </TableCell>
-                      <TableCell>
-                        {canAction ? (
-                          <div className="flex gap-1">
-                            {res.status === 'WAITING FOR CONFIRMATION' && (
-                              <>
-                                <Button 
-                                  size="sm" 
-                                  variant="outline"
-                                  className="text-green-600 hover:text-green-700 hover:bg-green-50"
-                                  onClick={() => handleConfirm(res.id)}
-                                  disabled={isPending}
-                                >
-                                  Confirm
-                                </Button>
-                                <Button 
-                                  size="sm" 
-                                  variant="outline"
-                                  className="text-orange-600 hover:text-orange-700 hover:bg-orange-50"
-                                  onClick={() => handleNotConfirmed(res.id)}
-                                  disabled={isPending}
-                                >
-                                  Not Conf
-                                </Button>
-                              </>
-                            )}
-                            {res.status !== 'CANCELLED' && (
-                              <Button 
-                                size="sm" 
+
+                    {/* Tour Date */}
+                    <TableCell className="text-xs whitespace-nowrap">
+                      {fmtDate(res.tour_dates?.tour_date)}
+                    </TableCell>
+
+                    {/* Docket */}
+                    <TableCell className="font-mono text-xs">
+                      {res.reservation_number}
+                    </TableCell>
+
+                    {/* Confirmation # */}
+                    <TableCell className="font-mono text-xs max-w-[96px] truncate" title={res.confirmation_number ?? ''}>
+                      {res.confirmation_number || '-'}
+                    </TableCell>
+
+                    {/* Customer / Agent stacked */}
+                    <TableCell className="max-w-[160px]">
+                      <div className="text-sm truncate" title={res.lead_passenger_name}>
+                        {res.lead_passenger_name}
+                      </div>
+                      <div className="text-xs text-muted-foreground truncate" title={res.agent_name ?? ''}>
+                        {res.agent_name || '-'}
+                      </div>
+                    </TableCell>
+
+                    {/* Tour — truncated with full name in tooltip */}
+                    <TableCell className="max-w-[180px]">
+                      <span className="text-sm block truncate" title={res.tours?.name ?? ''}>
+                        {res.tours?.name || '-'}
+                      </span>
+                    </TableCell>
+
+                    {/* Pax */}
+                    <TableCell className="text-sm text-center">
+                      {res.participants}
+                    </TableCell>
+
+                    {/* Status */}
+                    <TableCell>
+                      <StatusBadge status={res.status} />
+                    </TableCell>
+
+                    {/* Actions */}
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      {canAction ? (
+                        <div className="flex gap-1 flex-wrap">
+                          {res.status === 'WAITING FOR CONFIRMATION' && (
+                            <>
+                              <Button
+                                size="sm"
                                 variant="outline"
-                                className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                                onClick={() => handleCancel(res.id)}
+                                className="text-xs h-7 px-2 text-green-600 hover:text-green-700 hover:bg-green-50"
+                                onClick={() => handleConfirm(res.id)}
                                 disabled={isPending}
                               >
-                                Cancel
+                                Confirm
                               </Button>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </div>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="text-xs h-7 px-2 text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+                                onClick={() => handleNotConfirmed(res.id)}
+                                disabled={isPending}
+                              >
+                                Not Conf
+                              </Button>
+                            </>
+                          )}
+                          {res.status !== 'CANCELLED' && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="text-xs h-7 px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+                              onClick={() => handleCancel(res.id)}
+                              disabled={isPending}
+                            >
+                              Cancel
+                            </Button>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
         </CardContent>
       </Card>
+
+      {/* Detail Popup */}
+      <Dialog open={!!selectedRes} onOpenChange={(open) => { if (!open) setSelectedRes(null) }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              Reservation Details
+              {selectedRes && <StatusBadge status={selectedRes.status} />}
+            </DialogTitle>
+          </DialogHeader>
+          {selectedRes && (
+            <div className="space-y-1 mt-2 max-h-[60vh] overflow-y-auto pr-1">
+              <DetailRow label="Docket #" value={<span className="font-mono">{selectedRes.reservation_number}</span>} />
+              <DetailRow label="Confirmation #" value={selectedRes.confirmation_number
+                ? <span className="font-mono">{selectedRes.confirmation_number}</span>
+                : '-'} />
+              <DetailRow label="Voucher #" value={selectedRes.voucher_number} />
+              <DetailRow label="Created" value={fmtDateLong(selectedRes.created_at)} />
+              <DetailRow label="Tour Date" value={fmtDateLong(selectedRes.tour_dates?.tour_date)} />
+              <DetailRow label="Tour" value={selectedRes.tours?.name} />
+              <DetailRow label="Passengers" value={selectedRes.participants} />
+              <DetailRow label="Lead Passenger" value={selectedRes.lead_passenger_name} />
+              <DetailRow label="WhatsApp" value={selectedRes.whatsapp_number} />
+              <DetailRow label="Agent" value={selectedRes.agent_name} />
+              <DetailRow label="Agent Email" value={selectedRes.agent_email} />
+              <DetailRow label="Status" value={<StatusBadge status={selectedRes.status} />} />
+              {selectedRes.cancelled_at && (
+                <DetailRow label="Cancelled At" value={fmtDateLong(selectedRes.cancelled_at)} />
+              )}
+              {selectedRes.supplier_response_at && (
+                <DetailRow label="Supplier Response" value={fmtDateLong(selectedRes.supplier_response_at)} />
+              )}
+              <DetailRow label="Internal Notes" value={selectedRes.internal_notes || '-'} />
+            </div>
+          )}
+          {/* Actions inside popup */}
+          {selectedRes && canAction && (
+            <div className="flex gap-2 pt-3 border-t border-border">
+              {selectedRes.status === 'WAITING FOR CONFIRMATION' && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-green-600 hover:text-green-700 hover:bg-green-50"
+                    onClick={() => { handleConfirm(selectedRes.id); setSelectedRes(null) }}
+                    disabled={isPending}
+                  >
+                    Confirm
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+                    onClick={() => { handleNotConfirmed(selectedRes.id); setSelectedRes(null) }}
+                    disabled={isPending}
+                  >
+                    Not Confirmed
+                  </Button>
+                </>
+              )}
+              {selectedRes.status !== 'CANCELLED' && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                  onClick={() => { handleCancel(selectedRes.id); setSelectedRes(null) }}
+                  disabled={isPending}
+                >
+                  Cancel
+                </Button>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
