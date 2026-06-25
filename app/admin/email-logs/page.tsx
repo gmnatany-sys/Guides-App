@@ -68,14 +68,12 @@ export default function EmailLogsPage() {
     loadData()
   }, [])
 
+  // Compact format: "Jun 16, 14:30" — fits 130px column without wrapping.
   const formatDateTime = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    })
+    const d = new Date(dateStr)
+    const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
+    return `${date}, ${time}`
   }
 
   const getStatusBadge = (status: string) => {
@@ -181,20 +179,22 @@ export default function EmailLogsPage() {
       )}
 
       <Card>
+        {/* overflow-x-auto kept as safety net for very small screens */}
         <div className="overflow-x-auto">
-          <Table>
+          {/* table-fixed is required for max-w-* on th/td to be honoured */}
+          <Table className="table-fixed w-full">
             <TableHeader>
               <TableRow>
-                <TableHead className="whitespace-nowrap">Created</TableHead>
-                <TableHead className="whitespace-nowrap">Type</TableHead>
-                <TableHead className="whitespace-nowrap">Voucher</TableHead>
-                <TableHead className="whitespace-nowrap">From</TableHead>
-                <TableHead className="whitespace-nowrap">To</TableHead>
-                <TableHead className="whitespace-nowrap">CC</TableHead>
-                <TableHead className="whitespace-nowrap">Subject</TableHead>
-                <TableHead className="whitespace-nowrap">Status</TableHead>
-                <TableHead className="whitespace-nowrap">Error</TableHead>
-                <TableHead className="whitespace-nowrap">Sent At</TableHead>
+                <TableHead className="w-[115px]">Created</TableHead>
+                <TableHead className="w-[110px]">Type</TableHead>
+                <TableHead className="w-[80px]">Voucher</TableHead>
+                <TableHead className="w-[150px]">From</TableHead>
+                <TableHead className="w-[150px]">To</TableHead>
+                <TableHead className="w-[110px]">CC</TableHead>
+                <TableHead className="w-[180px]">Subject</TableHead>
+                <TableHead className="w-[80px]">Status</TableHead>
+                <TableHead className="w-[120px]">Error</TableHead>
+                <TableHead className="w-[115px]">Sent At</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -207,34 +207,34 @@ export default function EmailLogsPage() {
               ) : (
                 emailLogs.map((log) => (
                   <TableRow key={log.id}>
-                    <TableCell className="whitespace-nowrap text-sm">
+                    <TableCell className="text-sm whitespace-nowrap">
                       {formatDateTime(log.created_at)}
                     </TableCell>
                     <TableCell>
                       {getTypeBadge(log.email_type)}
                     </TableCell>
-                    <TableCell className="text-sm">
+                    <TableCell className="text-sm truncate" title={log.reservations?.voucher_number || log.reservations?.reservation_number || '-'}>
                       {log.reservations?.voucher_number || log.reservations?.reservation_number || '-'}
                     </TableCell>
-                    <TableCell className="text-sm">
+                    <TableCell className="text-sm truncate" title={log.from_email}>
                       {log.from_email}
                     </TableCell>
-                    <TableCell className="text-sm">
+                    <TableCell className="text-sm truncate" title={log.to_email}>
                       {log.to_email}
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground max-w-[150px] truncate">
+                    <TableCell className="text-sm text-muted-foreground truncate" title={log.cc || '-'}>
                       {log.cc || '-'}
                     </TableCell>
-                    <TableCell className="text-sm max-w-[200px] truncate" title={log.subject}>
+                    <TableCell className="text-sm truncate" title={log.subject}>
                       {log.subject}
                     </TableCell>
                     <TableCell>
                       {getStatusBadge(log.status)}
                     </TableCell>
-                    <TableCell className="text-sm text-red-600 max-w-[150px] truncate" title={log.error_message || ''}>
+                    <TableCell className="text-sm text-red-600 truncate" title={log.error_message || ''}>
                       {log.error_message || '-'}
                     </TableCell>
-                    <TableCell className="whitespace-nowrap text-sm">
+                    <TableCell className="text-sm whitespace-nowrap">
                       {log.sent_at ? formatDateTime(log.sent_at) : '-'}
                     </TableCell>
                   </TableRow>
