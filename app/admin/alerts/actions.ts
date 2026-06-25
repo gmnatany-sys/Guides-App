@@ -444,6 +444,43 @@ async function upsertAlertRow(
   return { id: inserted?.id || null, created: true, error: null }
 }
 
+// Combined helper: fetches active reservations once and builds both maps.
+// Replaces two sequential calls to getActiveParticipantsMap +
+// getLatestActiveReservationMap inside fetchMinimumParticipantAlerts, halving
+// the number of DB round trips for that function.
+async function getActiveReservationStatsMap(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  tourDateIds: string[]
+): Promise<{
+  activeParticipantsMap: Map<string, number>
+  latestActiveReservationMap: Map<string, string>
+}> {
+  const activeParticipantsMap = new Map<string, number>()
+  const latestActiveReservationMap = new Map<string, string>()
+  if (tourDateIds.length === 0) return { activeParticipantsMap, latestActiveReservationMap }
+
+  const { data } = await supabase
+    .from('reservations')
+    .select('tour_date_id, participants, created_at')
+    .in('tour_date_id', tourDateIds)
+    .in('status', ['WAITING FOR CONFIRMATION', 'CONFIRMED'])
+
+  for (const r of data || []) {
+    // Build participants sum map
+    activeParticipantsMap.set(
+      r.tour_date_id,
+      (activeParticipantsMap.get(r.tour_date_id) || 0) + (r.participants || 0)
+    )
+    // Build latest active reservation time map
+    const prev = latestActiveReservationMap.get(r.tour_date_id)
+    if (!prev || (r.created_at && r.created_at > prev)) {
+      latestActiveReservationMap.set(r.tour_date_id, r.created_at)
+    }
+  }
+
+  return { activeParticipantsMap, latestActiveReservationMap }
+}
+
 // Batched version: SUM of active participants for many tour dates at once.
 async function getActiveParticipantsMap(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -576,11 +613,11 @@ export async function fetchMinimumParticipantAlerts(filters?: {
       alertsByTd.set(r.tour_date_id, list)
     }
 
-    // Live active participants (SUM of WAITING/CONFIRMED) for every window date.
-    const liveMap = await getActiveParticipantsMap(supabase, windowIds)
-    // Latest active-reservation time per date, to detect bookings made after a
-    // supplier decision (which makes that decision stale).
-    const latestActiveMap = await getLatestActiveReservationMap(supabase, windowIds)
+    // Single round trip: fetch active reservations once and derive both maps.
+    const tStats = Date.now()
+    const { activeParticipantsMap: liveMap, latestActiveReservationMap: latestActiveMap } =
+      await getActiveReservationStatsMap(supabase, windowIds)
+    console.log(`[v0] pageData route=/admin/minimum-participants step=getActiveReservationStatsMap duration=${Date.now() - tStats}ms`)
 
     const merged: MinimumParticipantAlert[] = []
     const usedAlertIds = new Set<string>()

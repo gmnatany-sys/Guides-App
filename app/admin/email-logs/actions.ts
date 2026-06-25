@@ -54,7 +54,7 @@ export async function getPendingEmailCount() {
 
   const { count, error } = await supabase
     .from('email_logs')
-    .select('*', { count: 'exact', head: true })
+    .select('status', { count: 'exact', head: true })
     .in('status', ['PENDING', 'READY_TO_SEND'])
 
   console.log(`[v0] pageData route=/admin/email-logs step=getPendingEmailCount duration=${Date.now() - t0}ms`)
