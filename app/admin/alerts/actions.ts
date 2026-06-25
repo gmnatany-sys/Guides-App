@@ -568,11 +568,8 @@ export async function fetchMinimumParticipantAlerts(filters?: {
     const startStr = windowStart.toISOString().split('T')[0]
     const endStr = windowEnd.toISOString().split('T')[0]
 
-    // Step 1: fetch tour_dates window.
-    // Step 1+2 note: we cannot parallelise tour_dates and minimum_participant_alerts
-    // at this point because minimum_participant_alerts needs windowIds from tour_dates.
-    // However we CAN start minimum_participant_alerts immediately after tour_dates
-    // resolves, overlapping it with getActiveReservationStatsMap (step 3) below.
+    // Step 1: tour_dates window — must run first. Both step 2 and step 3 depend
+    // on windowIds derived from this result, so it cannot be parallelised.
     const tDates = Date.now()
     const { data: windowDates, error: tdError } = await supabase
       .from('tour_dates')
@@ -594,8 +591,8 @@ export async function fetchMinimumParticipantAlerts(filters?: {
       return { alerts: [], error: null }
     }
 
-    // Steps 2 and 3 are independent of each other — fire in parallel.
-    // Step 2: existing alert rows for these tour dates (status / decisions / history).
+    // Steps 2 and 3: both depend on windowIds but not on each other — parallel.
+    // Step 2: existing alert rows (status / decisions / history).
     // Step 3: active reservation counts + latest reservation time per date.
     const tParallel = Date.now()
     const [
