@@ -3,6 +3,8 @@
 import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 import { createEmailLog } from '@/lib/email-log'
+import { getCurrentUser } from '@/lib/auth'
+import { hasPermission } from '@/lib/auth-utils'
 
 const MIN_PARTICIPANTS_CANCEL_MESSAGE = 'The tour was cancelled because the minimum number of participants was not reached.'
 
@@ -444,6 +446,43 @@ async function upsertAlertRow(
   return { id: inserted?.id || null, created: true, error: null }
 }
 
+// Combined helper: fetches active reservations once and builds both maps.
+// Replaces two sequential calls to getActiveParticipantsMap +
+// getLatestActiveReservationMap inside fetchMinimumParticipantAlerts, halving
+// the number of DB round trips for that function.
+async function getActiveReservationStatsMap(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  tourDateIds: string[]
+): Promise<{
+  activeParticipantsMap: Map<string, number>
+  latestActiveReservationMap: Map<string, string>
+}> {
+  const activeParticipantsMap = new Map<string, number>()
+  const latestActiveReservationMap = new Map<string, string>()
+  if (tourDateIds.length === 0) return { activeParticipantsMap, latestActiveReservationMap }
+
+  const { data } = await supabase
+    .from('reservations')
+    .select('tour_date_id, participants, created_at')
+    .in('tour_date_id', tourDateIds)
+    .in('status', ['WAITING FOR CONFIRMATION', 'CONFIRMED'])
+
+  for (const r of data || []) {
+    // Build participants sum map
+    activeParticipantsMap.set(
+      r.tour_date_id,
+      (activeParticipantsMap.get(r.tour_date_id) || 0) + (r.participants || 0)
+    )
+    // Build latest active reservation time map
+    const prev = latestActiveReservationMap.get(r.tour_date_id)
+    if (!prev || (r.created_at && r.created_at > prev)) {
+      latestActiveReservationMap.set(r.tour_date_id, r.created_at)
+    }
+  }
+
+  return { activeParticipantsMap, latestActiveReservationMap }
+}
+
 // Batched version: SUM of active participants for many tour dates at once.
 async function getActiveParticipantsMap(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -515,6 +554,7 @@ export async function fetchMinimumParticipantAlerts(filters?: {
   status?: string
   alert_stage?: string
 }) {
+  const t0 = Date.now()
   const supabase = await createClient()
 
   try {
@@ -530,9 +570,9 @@ export async function fetchMinimumParticipantAlerts(filters?: {
     const startStr = windowStart.toISOString().split('T')[0]
     const endStr = windowEnd.toISOString().split('T')[0]
 
-    // All tour dates in the window (with tour name). We intentionally do NOT filter
-    // is_open / supplier_status here so that history rows for cancelled dates can
-    // still be shown; open/upcoming filtering for LIVE issues happens in code below.
+    // Step 1: tour_dates window — must run first. Both step 2 and step 3 depend
+    // on windowIds derived from this result, so it cannot be parallelised.
+    const tDates = Date.now()
     const { data: windowDates, error: tdError } = await supabase
       .from('tour_dates')
       .select('id, tour_date, is_open, supplier_status, tour:tours(id, name)')
@@ -540,6 +580,7 @@ export async function fetchMinimumParticipantAlerts(filters?: {
       .lte('tour_date', endStr)
       .order('tour_date', { ascending: true })
       .limit(500)
+    console.log(`[v0] pageData route=/admin/minimum-participants step=fetchTourDatesWindow duration=${Date.now() - tDates}ms`)
 
     if (tdError) {
       console.error('Error fetching tour dates:', tdError)
@@ -552,12 +593,22 @@ export async function fetchMinimumParticipantAlerts(filters?: {
       return { alerts: [], error: null }
     }
 
-    // Existing alert rows for these tour dates: used for status / decisions / history.
-    const { data: alertRows, error: arError } = await supabase
-      .from('minimum_participant_alerts')
-      .select('*')
-      .in('tour_date_id', windowIds)
-      .order('created_at', { ascending: false })
+    // Steps 2 and 3: both depend on windowIds but not on each other — parallel.
+    // Step 2: existing alert rows (status / decisions / history).
+    // Step 3: active reservation counts + latest reservation time per date.
+    const tParallel = Date.now()
+    const [
+      { data: alertRows, error: arError },
+      { activeParticipantsMap: liveMap, latestActiveReservationMap: latestActiveMap },
+    ] = await Promise.all([
+      supabase
+        .from('minimum_participant_alerts')
+        .select('*')
+        .in('tour_date_id', windowIds)
+        .order('created_at', { ascending: false }),
+      getActiveReservationStatsMap(supabase, windowIds),
+    ])
+    console.log(`[v0] pageData route=/admin/minimum-participants step=alertRows+statsMap parallel duration=${Date.now() - tParallel}ms`)
 
     if (arError) {
       console.error('Error fetching alert rows:', arError)
@@ -570,12 +621,6 @@ export async function fetchMinimumParticipantAlerts(filters?: {
       list.push(r)
       alertsByTd.set(r.tour_date_id, list)
     }
-
-    // Live active participants (SUM of WAITING/CONFIRMED) for every window date.
-    const liveMap = await getActiveParticipantsMap(supabase, windowIds)
-    // Latest active-reservation time per date, to detect bookings made after a
-    // supplier decision (which makes that decision stale).
-    const latestActiveMap = await getLatestActiveReservationMap(supabase, windowIds)
 
     const merged: MinimumParticipantAlert[] = []
     const usedAlertIds = new Set<string>()
@@ -730,6 +775,7 @@ export async function fetchMinimumParticipantAlerts(filters?: {
     console.log('[v0] MinParticipants INCLUDED:', debugIncluded)
     console.log('[v0] MinParticipants EXCLUDED:', debugExcluded)
 
+    console.log(`[v0] pageData route=/admin/minimum-participants step=fetchMinimumParticipantAlerts total=${Date.now() - t0}ms`)
     return { alerts: out, error: null }
   } catch (err) {
     console.error('[v0] fetchMinimumParticipantAlerts failed:', err)
@@ -892,6 +938,11 @@ export async function fetchMinimumParticipantCandidates(): Promise<{
 }
 
 export async function resolveAlert(alertId: string, decision: 'KEEP_TOUR' | 'CANCEL_TOUR', notes?: string) {
+  const actor = await getCurrentUser()
+  if (!hasPermission(actor, 'minimum_participants_action_access')) {
+    return { success: false, error: 'Permission denied.' }
+  }
+
   const supabase = await createClient()
   
   // Get the alert details first
@@ -2169,6 +2220,11 @@ export async function resolveAlertForTourDate(
   decision: 'KEEP_TOUR' | 'CANCEL_TOUR',
   notes?: string
 ) {
+  const actor = await getCurrentUser()
+  if (!hasPermission(actor, 'minimum_participants_action_access')) {
+    return { success: false, error: 'Permission denied.' }
+  }
+
   const supabase = await createClient()
 
   // Ensure an alert row exists for this tour date.

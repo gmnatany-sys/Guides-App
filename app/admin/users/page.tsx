@@ -18,6 +18,7 @@ import {
   deleteAppUser,
   fetchUserPermissions,
   updateUserPermission,
+  adminSetUserPassword,
   type AppUser,
   type UserPermission
 } from './actions'
@@ -92,6 +93,13 @@ const PERMISSION_GROUPS = [
       { key: 'tours_manage_access', label: 'Can view and perform actions in Tours' },
     ]
   },
+  {
+    section: 'Minimum Participants',
+    permissions: [
+      { key: 'minimum_participants_view_access', label: 'Can view Minimum Participants' },
+      { key: 'minimum_participants_action_access', label: 'Can perform actions in Minimum Participants (Keep / Cancel Tour)' },
+    ]
+  },
 ]
 
 const ROLE_DESCRIPTIONS: Record<string, string> = {
@@ -131,6 +139,13 @@ export default function UsersPage() {
   const [permissionsUser, setPermissionsUser] = useState<AppUser | null>(null)
   const [userPermissions, setUserPermissions] = useState<UserPermission[]>([])
   const [isLoadingPermissions, setIsLoadingPermissions] = useState(false)
+
+  // Set password state
+  const [setPasswordUser, setSetPasswordUser] = useState<AppUser | null>(null)
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [passwordError, setPasswordError] = useState<string | null>(null)
+  const [isSettingPassword, setIsSettingPassword] = useState(false)
 
   async function loadUsers() {
     setIsLoading(true)
@@ -259,6 +274,36 @@ export default function UsersPage() {
   function isPermissionEnabled(permissionKey: string): boolean {
     const permission = userPermissions.find(p => p.permission_key === permissionKey)
     return permission?.enabled ?? false
+  }
+
+  function openSetPassword(user: AppUser) {
+    setSetPasswordUser(user)
+    setNewPassword('')
+    setConfirmPassword('')
+    setPasswordError(null)
+  }
+
+  async function handleSetPassword() {
+    setPasswordError(null)
+    if (newPassword.length < 8) {
+      setPasswordError('Password must be at least 8 characters.')
+      return
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError('Passwords do not match.')
+      return
+    }
+    setIsSettingPassword(true)
+    const result = await adminSetUserPassword(setPasswordUser!.id, newPassword)
+    setIsSettingPassword(false)
+    if (result.success) {
+      setMessage({ type: 'success', text: `Password updated for ${setPasswordUser!.full_name}.` })
+      setSetPasswordUser(null)
+      setNewPassword('')
+      setConfirmPassword('')
+    } else {
+      setPasswordError(result.error || 'Failed to set password.')
+    }
   }
 
   return (
@@ -411,6 +456,13 @@ export default function UsersPage() {
                           >
                             Permissions
                           </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openSetPassword(user)}
+                          >
+                            Set Password
+                          </Button>
                           <Button 
                             variant="outline" 
                             size="sm"
@@ -521,6 +573,50 @@ export default function UsersPage() {
             <Button variant="outline" onClick={() => setDeletingUser(null)}>Cancel</Button>
             <Button variant="destructive" onClick={handleDeleteUser} disabled={isPending}>
               {isPending ? 'Deleting...' : 'Delete User'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Set Password Dialog */}
+      <Dialog open={!!setPasswordUser} onOpenChange={(open) => { if (!open) setSetPasswordUser(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Set Password{setPasswordUser ? ` — ${setPasswordUser.full_name}` : ''}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="new_password">New Password</Label>
+              <Input
+                id="new_password"
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="Min 8 characters"
+                autoComplete="new-password"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="confirm_password">Confirm Password</Label>
+              <Input
+                id="confirm_password"
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Repeat password"
+                autoComplete="new-password"
+              />
+            </div>
+            {passwordError && (
+              <p className="text-sm text-red-600">{passwordError}</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSetPasswordUser(null)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSetPassword} disabled={isSettingPassword}>
+              {isSettingPassword ? 'Saving...' : 'Set Password'}
             </Button>
           </DialogFooter>
         </DialogContent>

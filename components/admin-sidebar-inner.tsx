@@ -31,7 +31,15 @@ export function AdminSidebarInner({ navItems, user }: AdminSidebarInnerProps) {
       {/* Brand */}
       <div className="mb-6">
         <h1 className="text-xl font-semibold text-foreground">Japan Tours</h1>
-        <p className="text-xs text-muted-foreground">Admin Dashboard</p>
+        <p className="text-xs text-muted-foreground">
+          {user.role === 'admin'
+            ? 'Admin Dashboard'
+            : user.role === 'agent'
+            ? 'Agent Dashboard'
+            : user.role === 'supplier'
+            ? 'Supplier Dashboard'
+            : 'Dashboard'}
+        </p>
       </div>
 
       {/* Navigation */}
@@ -40,6 +48,7 @@ export function AdminSidebarInner({ navItems, user }: AdminSidebarInnerProps) {
           <Link
             key={item.href}
             href={item.href}
+            prefetch={false}
             className={cn(
               'px-3 py-2 rounded-md text-sm font-medium transition-colors',
               pathname === item.href

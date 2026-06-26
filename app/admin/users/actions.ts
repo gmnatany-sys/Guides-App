@@ -2,6 +2,8 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
+import { getCurrentUser } from '@/lib/auth'
+import { getServiceRoleClient, findAuthUserByEmail } from '@/lib/supabase-admin'
 
 export interface AppUser {
   id: string
@@ -253,4 +255,73 @@ export async function bulkUpdateUserPermissions(userId: string, permissions: { k
   
   revalidatePath('/admin/users')
   return { success: true }
+}
+
+/**
+ * Sets the Supabase Auth password for a given app_users row.
+ * If no matching Auth account exists, one is created automatically.
+ *
+ * Security:
+ *   - Re-verifies users_manage_access server-side (belt-and-suspenders over the layout gate).
+ *   - Uses the service-role Admin Auth API — no current password required or exposed.
+ *   - Password is never stored in app_users or any application table.
+ *   - Password is never logged.
+ *   - auth.admin.getUserByEmail() does not exist in @supabase/auth-js 2.107.0;
+ *     findAuthUserByEmail() uses paginated listUsers() instead.
+ */
+export async function adminSetUserPassword(
+  userId: string,
+  newPassword: string,
+): Promise<{ success: boolean; error: string | null }> {
+  // 1. Server-side permission check
+  const actor = await getCurrentUser()
+  if (!actor || !actor.permissions.includes('users_manage_access')) {
+    return { success: false, error: 'Unauthorized.' }
+  }
+
+  // 2. Validate inputs
+  if (!userId?.trim()) return { success: false, error: 'Invalid user ID.' }
+  if (!newPassword || newPassword.length < 8) {
+    return { success: false, error: 'Password must be at least 8 characters.' }
+  }
+
+  // 3. Look up target app_users row to get email
+  const service = getServiceRoleClient()
+  const { data: targetUser, error: userErr } = await service
+    .from('app_users')
+    .select('email, full_name')
+    .eq('id', userId)
+    .single()
+
+  if (userErr || !targetUser?.email) {
+    return { success: false, error: 'User not found.' }
+  }
+
+  // 4. Find the Supabase Auth account by email (paginated — no getUserByEmail in this SDK version)
+  const { user: authUser, error: findErr } = await findAuthUserByEmail(targetUser.email)
+  if (findErr) return { success: false, error: findErr }
+
+  if (!authUser) {
+    // 5a. No Auth account exists — create one with the provided password.
+    // email_confirm: true skips the confirmation email for admin-created accounts.
+    // Password is passed directly to the Auth API and never stored in app data.
+    const { error: createErr } = await service.auth.admin.createUser({
+      email: targetUser.email,
+      password: newPassword,
+      email_confirm: true,
+    })
+    if (createErr) return { success: false, error: createErr.message }
+    console.log(`[v0] adminSetUserPassword: actor=${actor.id} target=${userId} action=created_auth_account`)
+    return { success: true, error: null }
+  }
+
+  // 5b. Auth account exists — update the password.
+  // Password is passed directly to the Auth API and never stored in app data.
+  const { error: updateErr } = await service.auth.admin.updateUserById(authUser.id, {
+    password: newPassword,
+  })
+  if (updateErr) return { success: false, error: updateErr.message }
+
+  console.log(`[v0] adminSetUserPassword: actor=${actor.id} target=${userId} action=updated_password`)
+  return { success: true, error: null }
 }

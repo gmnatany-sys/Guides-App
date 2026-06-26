@@ -4,7 +4,14 @@ import { AccessDenied } from '@/components/access-denied'
 
 export default async function MinimumParticipantsLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUser()
-  if (!hasAnyPermission(user, ['reservations_view_access', 'supplier_confirmation_view'])) {
+  // Phase 1: allow access via new key OR either legacy key so existing users
+  // are not locked out before admin assigns minimum_participants_view_access.
+  // Phase 2 (after assignment): remove the two legacy keys from this list.
+  if (!hasAnyPermission(user, [
+    'minimum_participants_view_access',
+    'reservations_view_access',
+    'supplier_confirmation_view',
+  ])) {
     return <AccessDenied />
   }
   return <>{children}</>
