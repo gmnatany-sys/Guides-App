@@ -239,7 +239,7 @@ export default function AvailabilityCalendarPage() {
         </CardHeader>
         <CardContent>
           <Select value={selectedTourId} onValueChange={(value) => {
-            setSelectedTourId(value)
+            setSelectedTourId(value ?? '')
             setSelectedDates(new Set())
             setMessage(null)
           }}>
