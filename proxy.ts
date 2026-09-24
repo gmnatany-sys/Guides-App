@@ -36,18 +36,8 @@ export async function proxy(request: NextRequest) {
     },
   })
 
-  // Use getSession() here — it decodes the JWT locally (no network round-trip)
-  // and is sufficient to decide whether a user is logged in for the redirect
-  // gate below. getUser() (which makes a remote Supabase Auth call to verify
-  // the JWT) is reserved for getCurrentUser() in lib/auth.ts where full trust
-  // is required. This reduces proxy latency from ~1000ms to ~1ms.
-  const t0 = Date.now()
-  const {
-    data: { session },
-  } = await supabase.auth.getSession()
-  console.log(`[v0] proxy getSession: ${Date.now() - t0}ms — ${pathname}`)
-
-  const isLoggedIn = !!session?.user
+  const { data, error } = await supabase.auth.getClaims()
+  const isLoggedIn = !error && !!data?.claims?.sub
   const isProtected =
     pathname.startsWith('/admin') ||
     pathname.startsWith('/booking') ||
@@ -58,14 +48,12 @@ export async function proxy(request: NextRequest) {
   if (isProtected && !isLoggedIn) {
     const loginUrl = new URL('/login', request.url)
     loginUrl.searchParams.set('next', pathname)
-    return NextResponse.redirect(loginUrl)
+    const redirect = NextResponse.redirect(loginUrl)
+    response.cookies.getAll().forEach(cookie => redirect.cookies.set(cookie))
+    return redirect
   }
 
-  // If already logged in, don't show /login.
-  if (isLoginPage && isLoggedIn) {
-    return NextResponse.redirect(new URL('/', request.url))
-  }
-
+  // Keep login reachable for inactive or unassigned application accounts.
   return response
 }
 
