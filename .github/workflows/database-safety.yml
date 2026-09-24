@@ -21,12 +21,14 @@ jobs:
           supabase init --help
           supabase migration --help
           supabase migration new --help
-          supabase init
-          supabase migration new booking_prepare
-          cp database/prepare-remediation.sql supabase/migrations/*_booking_prepare.sql
-          sleep 2
-          supabase migration new booking_lockdown
-          cp database/lockdown-remediation.sql supabase/migrations/*_booking_lockdown.sql
+          if [ ! -f supabase/migrations/20260924194130_booking_prepare.sql ]; then
+            supabase init
+            supabase migration new booking_prepare
+            cp database/prepare-remediation.sql supabase/migrations/*_booking_prepare.sql
+            sleep 2
+            supabase migration new booking_lockdown
+            cp database/lockdown-remediation.sql supabase/migrations/*_booking_lockdown.sql
+          fi
           python3 - <<'PY'
           import hashlib, json, pathlib
           files = sorted(pathlib.Path('supabase/migrations').glob('*.sql'))
