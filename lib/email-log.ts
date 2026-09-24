@@ -1,388 +1,128 @@
-'use server'
-
-import { createClient } from '@/lib/supabase/server'
+import 'server-only'
+import { randomUUID } from 'node:crypto'
 import { Resend } from 'resend'
+import { getServiceRoleClient } from '@/lib/supabase-admin'
+import { escapeHtml } from '@/lib/html'
 
 type EmailType = 'NEW_BOOKING' | 'CONFIRMED' | 'NOT_CONFIRMED' | 'CANCELLED'
-
 interface EmailLogParams {
-  reservationId: string
-  emailType: EmailType
-  fromEmail: string
-  toEmail: string
-  cc?: string
-  subject: string
-  htmlBody?: string
-  textBody?: string
+  reservationId: string; emailType: EmailType; fromEmail: string; toEmail: string
+  cc?: string; subject: string; htmlBody?: string; textBody?: string
 }
 
-function getEmailBody(
-  emailType: EmailType, 
-  subject: string, 
-  reservation?: Record<string, unknown>, 
-  logoUrl?: string
-): { html: string, text: string } {
-  // Extract reservation details
-  const voucherNumber = reservation?.voucher_number || 'N/A'
-  const reservationNumber = reservation?.reservation_number || 'N/A'
-  const leadPassenger = reservation?.lead_passenger_name || 'N/A'
-  const whatsapp = reservation?.whatsapp_number || 'N/A'
-  const tourName = (reservation?.tours as Record<string, unknown>)?.name || 'N/A'
-  const tourDate = reservation?.tour_dates 
-    ? new Date((reservation.tour_dates as Record<string, unknown>).tour_date as string).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
-    : 'N/A'
-  const participants = reservation?.participants || 'N/A'
-  const status = reservation?.status || 'N/A'
-  const confirmationNumber = reservation?.confirmation_number || 'N/A'
-  const cancelledAt = reservation?.cancelled_at 
-    ? new Date(reservation.cancelled_at as string).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-    : 'N/A'
-  const internalNotes = reservation?.internal_notes || 'None'
-  const agentName = (reservation?.agent_name as string) || 'Not assigned'
-  const agentEmail = (reservation?.agent_email as string) || 'Not assigned'
+export function renderEmail(subject: string, reservation?: Record<string, any>, message?: string) {
+  const r = reservation
+  const rows: [string, unknown][] = r ? [
+    ['Voucher Number',r.voucher_number], ['Docket Number',r.reservation_number],
+    ['Lead Passenger',r.lead_passenger_name], ['WhatsApp',r.whatsapp_number],
+    ['Tour',r.tours?.name], ['Tour Date',r.tour_dates?.tour_date], ['Participants',r.participants],
+    ['Status',r.status], ['Confirmation Number',r.confirmation_number],
+    ['Agent Name',r.agent_name], ['Agent Email',r.agent_email], ['Notes',r.internal_notes],
+  ] : []
+  const text = [subject, message, ...rows.filter(([,v]) => v != null && v !== '').map(([k,v]) => `${k}: ${v}`),
+    'Japan Tours', 'https://v0-admin-dashboard-for-japan.vercel.app/'].filter(Boolean).join('\n\n')
+  const html = `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#21364c">
+    <img src="https://v0-admin-dashboard-for-japan.vercel.app/japan-tours-logo.png" alt="Japan Tours" width="200" style="display:block;height:auto">
+    <h1>${escapeHtml(subject)}</h1>${message ? `<p>${escapeHtml(message).replace(/\n/g,'<br>')}</p>` : ''}
+    <table>${rows.filter(([,v]) => v != null && v !== '').map(([k,v]) => `<tr><th style="text-align:left;padding:8px">${escapeHtml(k)}</th><td style="padding:8px">${escapeHtml(v)}</td></tr>`).join('')}</table>
+    <p><a href="https://v0-admin-dashboard-for-japan.vercel.app/">Japan Tours</a></p></div>`
+  return { html, text }
+}
 
-  // Logo header - only show if logoUrl is provided and valid
-  const logoHeader = logoUrl ? `
-    <div style="text-align: center; margin-bottom: 24px;">
-      <img src="${logoUrl}" alt="Japan Tours" style="max-width: 180px; height: auto; display: block; margin: 0 auto;" />
-    </div>
-  ` : ''
+async function prepareEmail(id: string) {
+  const service = getServiceRoleClient()
+  const { data: log, error } = await service.from('email_logs').select('*').eq('id',id).single()
+  if (error || !log) throw new Error('Email log could not be loaded.')
+  if (log.html_body && log.text_body) return log
+  if (log.first_attempt_at) throw new Error('Attempted email has no frozen payload. Delivery must be checked manually.')
+  // Existing untracked attempts must be reconciled against the provider before retry.
+  if (!log.event_key) throw new Error('Legacy email requires delivery review before it can be retried.')
+  let snapshot = log.reservation_snapshot
+  if (!snapshot && log.reservation_id) {
+    const { data, error: reservationError } = await service.from('reservations').select('*,tours(name),tour_dates(tour_date)').eq('id',log.reservation_id).single()
+    if (reservationError || !data) throw new Error('Email details could not be verified.')
+    snapshot = data
+  }
+  const body = renderEmail(log.subject, snapshot, log.text_body ?? undefined)
+  const { error: saveError } = await service.from('email_logs').update({html_body:body.html,text_body:log.text_body ?? body.text})
+    .eq('id',id).is('html_body',null).is('first_attempt_at',null)
+  if (saveError) throw new Error('Email payload could not be saved.')
+  return log
+}
 
-  // Common styles
-  const containerStyle = `font-family: Arial, Helvetica, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #ffffff;`
-  const headerStyle = `font-size: 24px; font-weight: bold; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid #e5e7eb;`
-  const tableStyle = `width: 100%; border-collapse: collapse; margin: 20px 0;`
-  const thStyle = `text-align: left; padding: 10px 12px; background-color: #f3f4f6; border: 1px solid #e5e7eb; font-weight: 600; color: #374151; width: 40%;`
-  const tdStyle = `padding: 10px 12px; border: 1px solid #e5e7eb; color: #1f2937;`
-  const footerStyle = `margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; color: #6b7280; font-size: 12px;`
-  const linkStyle = `color: #2563eb; text-decoration: none;`
-  const noteStyle = `background-color: #fef3c7; border: 1px solid #fcd34d; padding: 12px; border-radius: 6px; margin: 20px 0;`
-
-  switch (emailType) {
-    case 'NEW_BOOKING':
-      return {
-        html: `
-          <div style="${containerStyle}">
-            ${logoHeader}
-            <h1 style="${headerStyle} color: #2563eb;">New Tour Reservation</h1>
-            <p>Hello Itai,</p>
-            <p>A new tour reservation has been submitted and is waiting for supplier confirmation.</p>
-            
-            <table style="${tableStyle}">
-              <tr><th style="${thStyle}">Voucher Number</th><td style="${tdStyle}">${voucherNumber}</td></tr>
-              <tr><th style="${thStyle}">Reservation Number</th><td style="${tdStyle}">${reservationNumber}</td></tr>
-              <tr><th style="${thStyle}">Lead Passenger Name</th><td style="${tdStyle}">${leadPassenger}</td></tr>
-              <tr><th style="${thStyle}">WhatsApp Number</th><td style="${tdStyle}">${whatsapp}</td></tr>
-              <tr><th style="${thStyle}">Tour</th><td style="${tdStyle}">${tourName}</td></tr>
-              <tr><th style="${thStyle}">Tour Date</th><td style="${tdStyle}">${tourDate}</td></tr>
-              <tr><th style="${thStyle}">Participants</th><td style="${tdStyle}">${participants}</td></tr>
-              <tr><th style="${thStyle}">Current Status</th><td style="${tdStyle}">${status}</td></tr>
-              <tr><th style="${thStyle}">Agent Name</th><td style="${tdStyle}">${agentName}</td></tr>
-              <tr><th style="${thStyle}">Agent Email</th><td style="${tdStyle}">${agentEmail}</td></tr>
-            </table>
-            
-            <div style="${noteStyle}">
-              <strong>Action Required:</strong> Please review and confirm this booking in the Supplier Confirmation Queue.
-            </div>
-            
-            <p>Supplier Confirmation Queue: <a href="/supplier/confirm" style="${linkStyle}">/supplier/confirm</a></p>
-            
-            <div style="${footerStyle}">
-              <p>This is an automated message from Japan Tours.</p>
-            </div>
-          </div>
-        `,
-        text: `NEW TOUR RESERVATION
-
-Hello Itai,
-
-A new tour reservation has been submitted and is waiting for supplier confirmation.
-
-RESERVATION DETAILS
--------------------
-Voucher Number: ${voucherNumber}
-Reservation Number: ${reservationNumber}
-Lead Passenger Name: ${leadPassenger}
-WhatsApp Number: ${whatsapp}
-Tour: ${tourName}
-Tour Date: ${tourDate}
-Participants: ${participants}
-Current Status: ${status}
-Agent Name: ${agentName}
-Agent Email: ${agentEmail}
-
-ACTION REQUIRED: Please review and confirm this booking in the Supplier Confirmation Queue.
-
-Supplier Confirmation Queue: /supplier/confirm
-
----
-This is an automated message from Japan Tours.`
+export async function sendEmailLog(id: string): Promise<{ success: boolean; error?: string; skipped?: boolean }> {
+  let token: string | undefined
+  try {
+    if (!process.env.RESEND_API_KEY) return { success:false,error:'Email service is not configured. Notification remains queued.' }
+    const service = getServiceRoleClient()
+    const log = await prepareEmail(id)
+    if (log.status === 'SENT') return { success:true,skipped:true }
+    token = randomUUID()
+    const { data: claimed, error } = await service.rpc('booking_claim_email',{p_id:id,p_token:token})
+    if (error) throw new Error('Unable to claim email for delivery.')
+    const item = claimed?.[0]
+    if (!item) return { success:false,error:'Email is being processed or requires delivery review.' }
+    const resend = new Resend(process.env.RESEND_API_KEY)
+    // Payload and key stay identical for every retry. An ambiguous attempt is not
+    // automatically retried after the provider's 24-hour idempotency window.
+    const result = await resend.emails.send({from:item.from_email,to:item.to_email,
+      cc:item.cc ? item.cc.split(',').map((v:string)=>v.trim()).filter(Boolean) : undefined,
+      subject:item.subject,html:item.html_body,text:item.text_body}, {idempotencyKey:item.event_key})
+    if (result.error || !result.data?.id) throw new Error(result.error?.message ?? 'Provider did not confirm delivery.')
+    const { data: saved, error: saveError } = await service.from('email_logs').update({status:'SENT',sent_at:new Date().toISOString(),
+      provider_id:result.data.id,error_message:null,lease_until:null,lease_token:null}).eq('id',id).eq('lease_token',token).select('id').single()
+    if (saveError || !saved) return {success:false,error:'Provider accepted the email; saving the receipt failed. Retry within 23 hours using the same key.'}
+    return {success:true}
+  } catch (error) {
+    // Retain the lease and first-attempt timestamp on uncertainty. Another worker
+    // can safely reclaim after expiry, using the same frozen payload and key.
+    const message=error instanceof Error ? error.message : 'Email delivery failed.'
+    if (token) {
+      try {
+        await getServiceRoleClient().from('email_logs').update({status:'FAILED',error_message:message})
+          .eq('id',id).eq('lease_token',token).neq('status','SENT')
+      } catch {
+        // The claimed row remains recoverable after its lease expires.
       }
-
-    case 'CONFIRMED':
-      return {
-        html: `
-          <div style="${containerStyle}">
-            ${logoHeader}
-            <h1 style="${headerStyle} color: #16a34a;">Tour Reservation Confirmed</h1>
-            <p>Great news! The tour reservation has been confirmed by the supplier.</p>
-            
-            <table style="${tableStyle}">
-              <tr><th style="${thStyle}">Confirmation Number</th><td style="${tdStyle}"><strong style="color: #16a34a;">${confirmationNumber}</strong></td></tr>
-              <tr><th style="${thStyle}">Voucher Number</th><td style="${tdStyle}">${voucherNumber}</td></tr>
-              <tr><th style="${thStyle}">Reservation Number</th><td style="${tdStyle}">${reservationNumber}</td></tr>
-              <tr><th style="${thStyle}">Lead Passenger Name</th><td style="${tdStyle}">${leadPassenger}</td></tr>
-              <tr><th style="${thStyle}">WhatsApp Number</th><td style="${tdStyle}">${whatsapp}</td></tr>
-              <tr><th style="${thStyle}">Tour</th><td style="${tdStyle}">${tourName}</td></tr>
-              <tr><th style="${thStyle}">Tour Date</th><td style="${tdStyle}">${tourDate}</td></tr>
-              <tr><th style="${thStyle}">Participants</th><td style="${tdStyle}">${participants}</td></tr>
-              <tr><th style="${thStyle}">Status</th><td style="${tdStyle}"><span style="color: #16a34a; font-weight: bold;">CONFIRMED</span></td></tr>
-              <tr><th style="${thStyle}">Agent Name</th><td style="${tdStyle}">${agentName}</td></tr>
-              <tr><th style="${thStyle}">Agent Email</th><td style="${tdStyle}">${agentEmail}</td></tr>
-            </table>
-            
-            <div style="${footerStyle}">
-              <p>This is an automated message from Japan Tours.</p>
-            </div>
-          </div>
-        `,
-        text: `TOUR RESERVATION CONFIRMED
-
-Great news! The tour reservation has been confirmed by the supplier.
-
-RESERVATION DETAILS
--------------------
-Confirmation Number: ${confirmationNumber}
-Voucher Number: ${voucherNumber}
-Reservation Number: ${reservationNumber}
-Lead Passenger Name: ${leadPassenger}
-WhatsApp Number: ${whatsapp}
-Tour: ${tourName}
-Tour Date: ${tourDate}
-Participants: ${participants}
-Status: CONFIRMED
-Agent Name: ${agentName}
-Agent Email: ${agentEmail}
-
----
-This is an automated message from Japan Tours.`
-      }
-
-    case 'NOT_CONFIRMED':
-      return {
-        html: `
-          <div style="${containerStyle}">
-            ${logoHeader}
-            <h1 style="${headerStyle} color: #ea580c;">Tour Reservation Not Confirmed</h1>
-            <p>Unfortunately, the supplier did not confirm the following reservation.</p>
-            
-            <table style="${tableStyle}">
-              <tr><th style="${thStyle}">Voucher Number</th><td style="${tdStyle}">${voucherNumber}</td></tr>
-              <tr><th style="${thStyle}">Reservation Number</th><td style="${tdStyle}">${reservationNumber}</td></tr>
-              <tr><th style="${thStyle}">Lead Passenger Name</th><td style="${tdStyle}">${leadPassenger}</td></tr>
-              <tr><th style="${thStyle}">WhatsApp Number</th><td style="${tdStyle}">${whatsapp}</td></tr>
-              <tr><th style="${thStyle}">Tour</th><td style="${tdStyle}">${tourName}</td></tr>
-              <tr><th style="${thStyle}">Tour Date</th><td style="${tdStyle}">${tourDate}</td></tr>
-              <tr><th style="${thStyle}">Participants</th><td style="${tdStyle}">${participants}</td></tr>
-              <tr><th style="${thStyle}">Status</th><td style="${tdStyle}"><span style="color: #ea580c; font-weight: bold;">NOT CONFIRMED</span></td></tr>
-              <tr><th style="${thStyle}">Agent Name</th><td style="${tdStyle}">${agentName}</td></tr>
-              <tr><th style="${thStyle}">Agent Email</th><td style="${tdStyle}">${agentEmail}</td></tr>
-              <tr><th style="${thStyle}">Internal Notes</th><td style="${tdStyle}">${internalNotes}</td></tr>
-            </table>
-            
-            <div style="${noteStyle}">
-              <strong>Action Required:</strong> Please contact the customer to discuss alternative arrangements.
-            </div>
-            
-            <div style="${footerStyle}">
-              <p>This is an automated message from Japan Tours.</p>
-            </div>
-          </div>
-        `,
-        text: `TOUR RESERVATION NOT CONFIRMED
-
-Unfortunately, the supplier did not confirm the following reservation.
-
-RESERVATION DETAILS
--------------------
-Voucher Number: ${voucherNumber}
-Reservation Number: ${reservationNumber}
-Lead Passenger Name: ${leadPassenger}
-WhatsApp Number: ${whatsapp}
-Tour: ${tourName}
-Tour Date: ${tourDate}
-Participants: ${participants}
-Status: NOT CONFIRMED
-Agent Name: ${agentName}
-Agent Email: ${agentEmail}
-Internal Notes: ${internalNotes}
-
-ACTION REQUIRED: Please contact the customer to discuss alternative arrangements.
-
----
-This is an automated message from Japan Tours.`
-      }
-
-    case 'CANCELLED':
-      return {
-        html: `
-          <div style="${containerStyle}">
-            ${logoHeader}
-            <h1 style="${headerStyle} color: #dc2626;">Tour Reservation Cancelled</h1>
-            <p>Hello Itai,</p>
-            <p>A confirmed tour reservation has been cancelled.</p>
-            
-            <table style="${tableStyle}">
-              <tr><th style="${thStyle}">Voucher Number</th><td style="${tdStyle}">${voucherNumber}</td></tr>
-              <tr><th style="${thStyle}">Reservation Number</th><td style="${tdStyle}">${reservationNumber}</td></tr>
-              <tr><th style="${thStyle}">Lead Passenger Name</th><td style="${tdStyle}">${leadPassenger}</td></tr>
-              <tr><th style="${thStyle}">WhatsApp Number</th><td style="${tdStyle}">${whatsapp}</td></tr>
-              <tr><th style="${thStyle}">Tour</th><td style="${tdStyle}">${tourName}</td></tr>
-              <tr><th style="${thStyle}">Tour Date</th><td style="${tdStyle}">${tourDate}</td></tr>
-              <tr><th style="${thStyle}">Participants</th><td style="${tdStyle}">${participants}</td></tr>
-              <tr><th style="${thStyle}">Status</th><td style="${tdStyle}"><span style="color: #dc2626; font-weight: bold;">CANCELLED</span></td></tr>
-              <tr><th style="${thStyle}">Cancellation Date</th><td style="${tdStyle}">${cancelledAt}</td></tr>
-              <tr><th style="${thStyle}">Agent Name</th><td style="${tdStyle}">${agentName}</td></tr>
-              <tr><th style="${thStyle}">Agent Email</th><td style="${tdStyle}">${agentEmail}</td></tr>
-              <tr><th style="${thStyle}">Internal Notes</th><td style="${tdStyle}">${internalNotes}</td></tr>
-            </table>
-            
-            <div style="${footerStyle}">
-              <p>This is an automated message from Japan Tours.</p>
-            </div>
-          </div>
-        `,
-        text: `TOUR RESERVATION CANCELLED
-
-Hello Itai,
-
-A confirmed tour reservation has been cancelled.
-
-RESERVATION DETAILS
--------------------
-Voucher Number: ${voucherNumber}
-Reservation Number: ${reservationNumber}
-Lead Passenger Name: ${leadPassenger}
-WhatsApp Number: ${whatsapp}
-Tour: ${tourName}
-Tour Date: ${tourDate}
-Participants: ${participants}
-Status: CANCELLED
-Cancellation Date: ${cancelledAt}
-Agent Name: ${agentName}
-Agent Email: ${agentEmail}
-Internal Notes: ${internalNotes}
-
----
-This is an automated message from Japan Tours.`
-      }
-
-    default:
-      return {
-        html: `<div style="${containerStyle}"><p>${subject}</p></div>`,
-        text: subject
-      }
+    }
+    return {success:false,error:message}
   }
 }
 
 export async function createEmailLog(params: EmailLogParams) {
-  const supabase = await createClient()
-
-  // First, create the email log with PENDING status
-  const { data: emailLog, error: insertError } = await supabase.from('email_logs').insert({
-    reservation_id: params.reservationId,
-    email_type: params.emailType,
-    from_email: params.fromEmail,
-    to_email: params.toEmail,
-    cc: params.cc || null,
-    subject: params.subject,
-    status: 'PENDING'
-  }).select('id').single()
-
-  if (insertError) {
-    console.error('[v0] Failed to create email log:', insertError.message)
-    return { success: false, error: insertError.message }
+  const service = getServiceRoleClient()
+  const {data:id,error} = await service.rpc('booking_queue_email',{p_reservation:params.reservationId,p_type:params.emailType})
+  if (error || !id) return {success:false,error:error?.message ?? 'Email was not queued.'}
+  if (params.htmlBody && params.textBody) {
+    const {error:saveError} = await service.from('email_logs').update({html_body:params.htmlBody,text_body:params.textBody})
+      .eq('id',id).is('html_body',null).is('first_attempt_at',null)
+    if (saveError) return {success:false,error:'Email body could not be saved.'}
   }
+  return sendEmailLog(id)
+}
 
-  // Load full reservation details including tour name and tour date
-  const { data: reservation, error: reservationError } = await supabase
-    .from('reservations')
-    .select('*, tours(name), tour_dates(tour_date)')
-    .eq('id', params.reservationId)
-    .single()
-
-  if (reservationError) {
-    console.error('[v0] Failed to load reservation:', reservationError.message)
+export async function processEmailOutbox(options: {reservationIds?:string[];failedOnly?:boolean;dryRun?:boolean;limit?:number} = {}) {
+  const service = getServiceRoleClient()
+  let query = service.from('email_logs').select('id').in('status',options.failedOnly?['FAILED','ERROR']:['PENDING','FAILED','ERROR'])
+    .not('event_key','is',null)
+    .or(`first_attempt_at.is.null,first_attempt_at.gt.${new Date(Date.now()-23*60*60*1000).toISOString()}`)
+    .or(`lease_until.is.null,lease_until.lt.${new Date().toISOString()}`)
+    .order('created_at').limit(Math.min(options.limit ?? 20,50))
+  if (options.reservationIds) query=query.in('reservation_id',options.reservationIds)
+  const {data,error} = await query
+  if(error) return {success:false,sent:0,failed:0,pending:0,error:error.message}
+  if(options.dryRun) return {success:true,sent:0,failed:0,pending:data?.length ?? 0}
+  let sent=0,failed=0;let lastError:string|undefined
+  for(const item of data ?? []) {
+    const result=await sendEmailLog(item.id)
+    if(result.success) sent++;else {failed++;lastError=result.error}
+    // Bound sends to the provider's rate limit. This is an application worker delay.
+    await new Promise(resolve=>setTimeout(resolve,600))
   }
+  return {success:failed===0,sent,failed,pending:failed,error:lastError}
+}
 
-  // Build logo URL - requires full HTTPS URL for email clients
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.VERCEL_URL || ''
-  const logoUrl = appUrl 
-    ? (appUrl.startsWith('http') ? `${appUrl}/japan-tours-logo.png` : `https://${appUrl}/japan-tours-logo.png`)
-    : ''
-
-  // Now send the actual email via Resend
-  const resendApiKey = process.env.RESEND_API_KEY
-  if (!resendApiKey) {
-    console.error('[v0] RESEND_API_KEY is not set')
-    await supabase.from('email_logs').update({
-      status: 'FAILED',
-      error_message: 'RESEND_API_KEY is not configured'
-    }).eq('id', emailLog.id)
-    return { success: false, error: 'Email service not configured' }
-  }
-
-  const resend = new Resend(resendApiKey)
-  
-  // Generate email body with reservation details
-  const { html, text } = params.htmlBody && params.textBody 
-    ? { html: params.htmlBody, text: params.textBody }
-    : getEmailBody(params.emailType, params.subject, reservation || undefined, logoUrl || undefined)
-
-  // Parse CC emails into array
-  const ccEmails = params.cc ? params.cc.split(',').map(e => e.trim()).filter(Boolean) : undefined
-
-  try {
-    // Timeout protection: never let the email send block the action indefinitely.
-    const sendResult = await Promise.race([
-      resend.emails.send({
-        from: params.fromEmail,
-        to: params.toEmail,
-        cc: ccEmails,
-        subject: params.subject,
-        html: html,
-        text: text
-      }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Email send timed out after 10s')), 10000)
-      )
-    ]) as { error: { message: string } | null }
-
-    const sendError = sendResult?.error
-
-    if (sendError) {
-      console.error('[v0] Failed to send email:', sendError.message)
-      await supabase.from('email_logs').update({
-        status: 'FAILED',
-        error_message: sendError.message
-      }).eq('id', emailLog.id)
-      return { success: false, error: sendError.message }
-    }
-
-    // Update log to SENT
-    await supabase.from('email_logs').update({
-      status: 'SENT',
-      sent_at: new Date().toISOString()
-    }).eq('id', emailLog.id)
-
-    return { success: true }
-  } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : 'Unknown error sending email'
-    console.error('[v0] Email send exception:', errorMessage)
-    await supabase.from('email_logs').update({
-      status: 'FAILED',
-      error_message: errorMessage
-    }).eq('id', emailLog.id)
-    return { success: false, error: errorMessage }
-  }
+export async function deliverReservationEmails(ids:string[]) {
+  try { return await processEmailOutbox({reservationIds:ids,limit:8}) }
+  catch { return {success:false,sent:0,failed:1,pending:1,error:'Notification remains queued.'} }
 }
