@@ -75,11 +75,12 @@ export default function BookingClient({ currentUserId, currentUserRole, currentU
   useEffect(() => {
     async function loadInitialData() {
       try {
-        const { tours: toursData, agents: agentsData } = await fetchBookingInitialData()
+        const { tours: toursData, agents: agentsData, toursError, agentsError } = await fetchBookingInitialData()
+        if (toursError || agentsError) throw new Error(toursError ?? agentsError ?? 'Initial data failed')
         setTours(toursData)
         setAgents(agentsData)
       } catch (err) {
-        console.error('[v0] booking loadInitialData failed:', err)
+        setMessage({type:'error',text:err instanceof Error ? err.message : 'Unable to load booking options.'})
       }
     }
     loadInitialData()
@@ -93,14 +94,19 @@ export default function BookingClient({ currentUserId, currentUserRole, currentU
       return
     }
 
+    let ignore = false
+    setCalendarDates([])
+    setSelectedDateInfo(null)
     async function loadCalendarDates() {
       setIsLoadingCalendar(true)
       try {
-        const { calendarDates: dates } = await fetchTourDatesForCalendar(
+        const { calendarDates: dates, error } = await fetchTourDatesForCalendar(
           selectedTourId,
           currentMonth.year,
           currentMonth.month
         )
+        if (ignore) return
+        if (error) throw new Error(error)
         setCalendarDates(dates)
         // If the currently-selected date is not present in the newly loaded month,
         // clear it so a stale tour_date_id can never linger in the hidden input.
@@ -113,13 +119,15 @@ export default function BookingClient({ currentUserId, currentUserRole, currentU
           return prev
         })
       } catch (err) {
-        console.error('[v0] booking loadCalendarDates failed:', err)
+        if (ignore) return
+        setMessage({type:'error',text:err instanceof Error ? err.message : 'Unable to load availability.'})
         setCalendarDates([])
       } finally {
-        setIsLoadingCalendar(false)
+        if (!ignore) setIsLoadingCalendar(false)
       }
     }
     loadCalendarDates()
+    return () => { ignore = true }
   }, [selectedTourId, currentMonth])
 
   // Reset selection when tour changes
@@ -135,10 +143,10 @@ export default function BookingClient({ currentUserId, currentUserRole, currentU
       setParticipantsError(null)
       return
     }
-    const numParticipants = parseInt(participants, 10)
+    const numParticipants = Number(participants)
     if (numParticipants > selectedDateInfo.seats_left) {
       setParticipantsError(`Only ${selectedDateInfo.seats_left} seat${selectedDateInfo.seats_left !== 1 ? 's' : ''} are available for this date.`)
-    } else if (numParticipants < 1) {
+    } else if (!Number.isSafeInteger(numParticipants) || numParticipants < 1) {
       setParticipantsError('Number of participants must be at least 1.')
     } else {
       setParticipantsError(null)
@@ -164,7 +172,7 @@ export default function BookingClient({ currentUserId, currentUserRole, currentU
   }
 
   function handleDateSelect(date: CalendarDate) {
-    if (!date.is_open || date.is_full) return
+    if (isLoadingCalendar || !date.is_open || date.is_full || date.supplier_status === 'CANCELLED') return
     // Store the whole availability object as one unit (id, tour_id, tour_date, seats).
     setSelectedDateInfo(date)
   }
