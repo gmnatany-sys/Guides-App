@@ -69,6 +69,7 @@ const PERMISSION_GROUPS = [
     section: 'Email',
     permissions: [
       { key: 'email_logs_view_access', label: 'Can view Email Logs' },
+      { key: 'email_logs_manage_access', label: 'Can send and retry emails' },
     ]
   },
   {
@@ -234,11 +235,11 @@ export default function UsersPage() {
     startTransition(async () => {
       const result = await deleteAppUser(deletingUser.id)
       if (result.success) {
-        setMessage({ type: 'success', text: 'User deleted successfully.' })
+        setMessage({ type: 'success', text: 'User deactivated. Booking history was preserved.' })
         setDeletingUser(null)
         loadUsers()
       } else {
-        setMessage({ type: 'error', text: result.error || 'Failed to delete user.' })
+        setMessage({ type: 'error', text: result.error || 'Failed to deactivate user.' })
       }
     })
   }
@@ -374,7 +375,7 @@ export default function UsersPage() {
           <div className="flex flex-wrap gap-4 items-end p-4 bg-slate-50 rounded-lg">
             <div className="space-y-2">
               <Label>Role</Label>
-              <Select value={roleFilter} onValueChange={setRoleFilter}>
+              <Select value={roleFilter} onValueChange={value => { if (value !== null) setRoleFilter(value) }}>
                 <SelectTrigger className="w-[150px]">
                   <SelectValue />
                 </SelectTrigger>
@@ -388,7 +389,7 @@ export default function UsersPage() {
             </div>
             <div className="space-y-2">
               <Label>Status</Label>
-              <Select value={activeFilter} onValueChange={setActiveFilter}>
+              <Select value={activeFilter} onValueChange={value => { if (value !== null) setActiveFilter(value) }}>
                 <SelectTrigger className="w-[130px]">
                   <SelectValue />
                 </SelectTrigger>
@@ -563,16 +564,16 @@ export default function UsersPage() {
       <Dialog open={!!deletingUser} onOpenChange={(open) => !open && setDeletingUser(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete User</DialogTitle>
+            <DialogTitle>Deactivate User</DialogTitle>
           </DialogHeader>
           <p className="text-muted-foreground">
-            Are you sure you want to delete <strong>{deletingUser?.full_name}</strong>? 
-            This action cannot be undone.
+            Are you sure you want to deactivate <strong>{deletingUser?.full_name}</strong>?
+            The account can be reactivated later. Booking history is preserved.
           </p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeletingUser(null)}>Cancel</Button>
             <Button variant="destructive" onClick={handleDeleteUser} disabled={isPending}>
-              {isPending ? 'Deleting...' : 'Delete User'}
+              {isPending ? 'Deactivating...' : 'Deactivate User'}
             </Button>
           </DialogFooter>
         </DialogContent>
