@@ -207,7 +207,7 @@ export default function AlertsPage() {
           <div className="flex flex-wrap gap-4 items-end">
             <div className="space-y-2">
               <Label>Status</Label>
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <Select value={statusFilter} onValueChange={value => { if (value !== null) setStatusFilter(value) }}>
                 <SelectTrigger className="w-[150px]">
                   <SelectValue />
                 </SelectTrigger>
@@ -222,7 +222,7 @@ export default function AlertsPage() {
             </div>
             <div className="space-y-2">
               <Label>Alert Stage</Label>
-              <Select value={stageFilter} onValueChange={setStageFilter}>
+              <Select value={stageFilter} onValueChange={value => { if (value !== null) setStageFilter(value) }}>
                 <SelectTrigger className="w-[200px]">
                   <SelectValue />
                 </SelectTrigger>
