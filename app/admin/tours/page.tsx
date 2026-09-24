@@ -1,4 +1,5 @@
-import { createClient } from '@/lib/supabase/server'
+import { getServiceRoleClient as createClient } from '@/lib/supabase-admin'
+import { requirePermission, safeSearch } from '@/lib/authorization'
 import {
   Table,
   TableBody,
@@ -11,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import type { Tour } from '@/lib/types'
 
 export default async function ToursPage() {
+  await requirePermission('tours_manage_access')
   const supabase = await createClient()
   const { data: tours, error } = await supabase
     .from('tours')
@@ -56,7 +58,7 @@ export default async function ToursPage() {
                       {tour.description || '—'}
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {new Date(tour.created_at).toLocaleDateString()}
+                      {tour.created_at ? new Date(tour.created_at).toLocaleDateString() : '—'}
                     </TableCell>
                   </TableRow>
                 ))}

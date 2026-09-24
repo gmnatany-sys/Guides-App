@@ -11,5 +11,5 @@ export default async function Page() {
     item.permissions.some((key) => permSet.has(key))
   )
 
-  redirect(firstVisible?.href ?? '/login')
+  redirect(firstVisible?.href ?? '/access-denied')
 }

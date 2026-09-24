@@ -8,7 +8,7 @@ This app uses Supabase project `handniwiwphefterousk`. Supabase stops automatica
 
 This repository did not contain the original table-creation migrations at the time of this change. **This export is not a complete empty-database bootstrap.** Restore the matching schema, functions and RLS policies first, then apply this permissions baseline before serving traffic. A full clean rebuild must also include the original schema setup. Do not add this isolated export to a fresh migration chain and assume it creates the database.
 
-Run `verify-supabase-permissions.sql` as a database administrator after restoring or intentionally changing schema permissions. Zero rows means that both granted and denied privileges match the captured contract and RLS remains enabled. A missing object is an error, not a pass.
+Run `verify-supabase-permissions.sql` only to verify this historical baseline. It is not the post-remediation permission contract. After the security rollout, use `database/verify-remediation.sql` and follow `database/ROLLOUT.md`. Never reapply the historical grants over the secured deployment.
 
 ## Every future schema change
 
@@ -21,4 +21,3 @@ The captured legacy anon privileges remain subject to RLS. They are not a templa
 The migration was validated inside a rolled-back transaction, then recorded by Supabase. All effective permissions for anon, authenticated and service_role and all public-table RLS policy fingerprints were identical before and after. Read-only service-role query probes passed for all eight tables. This was permission and SQL validation, not an end-to-end booking test or an empty-database rebuild.
 
 Reference: https://github.com/orgs/supabase/discussions/45329
-

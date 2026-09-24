@@ -5,7 +5,7 @@ import { normalizeSupabaseUrl } from './url'
 // Use APP_SUPABASE_URL (base URL only). normalizeSupabaseUrl strips any trailing
 // slash or accidental /rest/v1 suffix, and falls back to the correct project if unset.
 const SUPABASE_URL = normalizeSupabaseUrl(process.env.APP_SUPABASE_URL)
-const SUPABASE_ANON_KEY = process.env.JWT_8
+const SUPABASE_ANON_KEY = process.env.JWT_8!
 
 /**
  * Especially important if using Fluid compute: Don't put this client in a

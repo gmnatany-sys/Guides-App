@@ -1,12 +1,15 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
+import { getServiceRoleClient as createClient } from '@/lib/supabase-admin'
+import { requirePermission, safeSearch } from '@/lib/authorization'
 import { revalidatePath } from 'next/cache'
-import { createEmailLog } from '@/lib/email-log'
-import { syncMinimumParticipantsForTourDate } from '@/app/admin/alerts/actions'
+import { deliverReservationEmails } from '@/lib/email-log'
+import { syncDates, refreshBookingPages } from '@/lib/booking-workflows'
 import { getCurrentUser } from '@/lib/auth'
 
 export async function fetchActiveTours() {
+  await requirePermission("booking_form_access")
+
   const t0 = Date.now()
   const supabase = await createClient()
   
@@ -25,6 +28,9 @@ export async function fetchActiveTours() {
 
 // Active agents for the booking form's Agent dropdown.
 export async function fetchActiveAgents() {
+  const actor = await requirePermission("booking_form_access")
+
+  if (actor.role === 'agent') return {agents:[{id:actor.id,full_name:actor.full_name,email:actor.email}],error:null}
   const t0 = Date.now()
   const supabase = await createClient()
 
@@ -46,6 +52,8 @@ export async function fetchActiveAgents() {
 // Supabase client connection. Replaces the two separate useEffect calls on the
 // booking page, halving connection round-trip overhead on initial mount.
 export async function fetchBookingInitialData() {
+  const actor = await requirePermission("booking_form_access")
+
   const t0 = Date.now()
   const supabase = await createClient()
 
@@ -68,22 +76,25 @@ export async function fetchBookingInitialData() {
   return {
     tours: toursResult.data || [],
     toursError: toursResult.error?.message || null,
-    agents: agentsResult.data || [],
+    agents: actor.role === 'agent' ? [{id:actor.id,full_name:actor.full_name,email:actor.email}] : agentsResult.data || [],
     agentsError: agentsResult.error?.message || null,
   }
 }
 
 export async function fetchAvailableDates(tourId: string) {
+  await requirePermission("booking_form_access")
+
   const supabase = await createClient()
   
   // Get tour's max_capacity (default to 8 if missing)
-  const { data: tour } = await supabase
+  const { data: tour, error: tourError } = await supabase
     .from('tours')
     .select('max_capacity')
     .eq('id', tourId)
     .single()
 
-  const maxCapacity = tour?.max_capacity || 8
+  if (tourError || !tour || !Number.isInteger(tour.max_capacity)) return { availableDates: [], error: 'Tour capacity could not be verified.' }
+  const maxCapacity = tour.max_capacity
 
   // Get open tour_dates for this tour
   const { data: tourDates, error: datesError } = await supabase
@@ -128,22 +139,17 @@ async function getActiveParticipantsByDate(
   tourDateIds: string[]
 ): Promise<Map<string, number>> {
   const map = new Map<string, number>()
-  if (tourDateIds.length === 0) return map
-
-  const { data } = await supabase
-    .from('reservations')
-    .select('tour_date_id, participants')
-    .in('tour_date_id', tourDateIds)
-    .in('status', ['WAITING FOR CONFIRMATION', 'CONFIRMED'])
-
-  for (const r of data || []) {
-    map.set(r.tour_date_id, (map.get(r.tour_date_id) || 0) + (r.participants || 0))
-  }
+  if (!tourDateIds.length) return map
+  const { data, error } = await supabase.rpc('booking_participant_counts', { p_ids: tourDateIds })
+  if (error) throw new Error('Availability could not be verified. Please try again.')
+  for (const r of data ?? []) map.set(r.tour_date_id, Number(r.participants))
   return map
 }
 
 // Fetch tour dates for a specific month - includes closed/full dates for calendar display
 export async function fetchTourDatesForCalendar(tourId: string, year: number, month: number) {
+  await requirePermission("booking_form_access")
+
   const t0 = Date.now()
   const supabase = await createClient()
 
@@ -169,7 +175,8 @@ export async function fetchTourDatesForCalendar(tourId: string, year: number, mo
       .lte('tour_date', endDate)
       .order('tour_date', { ascending: true }),
   ])
-  const maxCapacity = tourResult.data?.max_capacity || 8
+  if (tourResult.error || !tourResult.data) return { calendarDates: [], maxCapacity: 0, error: 'Tour capacity could not be verified.' }
+  const maxCapacity = tourResult.data.max_capacity
   console.log(`[v0] pageData route=/booking step=fetchTourMaxCapacity+fetchCalendarTourDates parallel duration=${Date.now() - tStep1}ms`)
 
   if (datesError) {
@@ -203,198 +210,14 @@ export async function fetchTourDatesForCalendar(tourId: string, year: number, mo
 }
 
 export async function submitBooking(formData: FormData) {
-  const tourId = formData.get('tour_id') as string
-  const tourDateId = formData.get('tour_date_id') as string
-  const reservationNumber = formData.get('reservation_number') as string
-  const voucherNumber = formData.get('voucher_number') as string
-  const leadPassengerName = formData.get('lead_passenger_name') as string
-  const whatsappNumber = formData.get('whatsapp_number') as string
-  const participants = parseInt(formData.get('participants') as string, 10)
-  let agentUserId = formData.get('agent_user_id') as string
-
-  // SERVER-SIDE AGENT ENFORCEMENT: if the caller is an agent, override
-  // whatever agent_user_id the client sent with the caller's own id.
-  // This ensures agents can only submit bookings under their own name,
-  // regardless of what the client-side form contains.
-  const actor = await getCurrentUser()
-  if (actor?.role === 'agent') {
-    agentUserId = actor.id
-  }
-
-  // Validate ALL required fields
-  const missingFields: string[] = []
-  if (!tourId) missingFields.push('Tour')
-  if (!tourDateId) missingFields.push('Available Date')
-  if (!reservationNumber?.trim()) missingFields.push('Docket Number')
-  if (!voucherNumber?.trim()) missingFields.push('Voucher Number')
-  if (!leadPassengerName?.trim()) missingFields.push('Lead Passenger Name')
-  if (!whatsappNumber?.trim()) missingFields.push('WhatsApp Number')
-  if (!participants || isNaN(participants)) missingFields.push('Number of Participants')
-  if (!agentUserId?.trim()) missingFields.push('Agent')
-
-  if (missingFields.length > 0) {
-    return { success: false, error: `Please fill in all required fields: ${missingFields.join(', ')}` }
-  }
-
-  if (participants < 1) {
-    return { success: false, error: 'Number of participants must be at least 1.' }
-  }
-
-  const supabase = await createClient()
-
-  // The exact tour_date the client believed it was booking (for cross-check / logging).
-  const selectedTourDateLabel = (formData.get('selected_tour_date') as string) || null
-
-  // SERVER-SIDE VERIFICATION (data integrity): fetch the selected tour_date by ID and
-  // confirm it is valid and belongs to the selected tour. This prevents a stale or
-  // mismatched tour_date_id (e.g. left over from a previous tour/month) from ever being
-  // saved against the wrong date.
-  const { data: selectedTourDate, error: tourDateError } = await supabase
-    .from('tour_dates')
-    .select('id, tour_id, tour_date, is_open, supplier_status')
-    .eq('id', tourDateId)
-    .maybeSingle()
-
-  if (tourDateError || !selectedTourDate) {
-    return { success: false, error: 'The selected tour date could not be found. Please re-select a date.' }
-  }
-  if (selectedTourDate.tour_id !== tourId) {
-    console.error('[v0] booking tour_date/tour mismatch:', { tourId, tourDateId, tourDateTourId: selectedTourDate.tour_id })
-    return { success: false, error: 'The selected date does not belong to the selected tour. Please re-select a date.' }
-  }
-  if (!selectedTourDate.is_open) {
-    return { success: false, error: 'The selected tour date is no longer open for booking. Please choose another date.' }
-  }
-  if (selectedTourDate.supplier_status === 'CANCELLED') {
-    return { success: false, error: 'The selected tour date has been cancelled. Please choose another date.' }
-  }
-  // If the client sent a date label, it must match the authoritative DB date.
-  if (selectedTourDateLabel && selectedTourDateLabel !== selectedTourDate.tour_date) {
-    console.error('[v0] booking date label mismatch:', { selectedTourDateLabel, dbTourDate: selectedTourDate.tour_date, tourDateId })
-    return { success: false, error: 'The selected date is out of sync. Please re-select the date and try again.' }
-  }
-
-  // SERVER-SIDE VALIDATION: Recalculate seats_left to prevent race conditions / overbooking
-  // Get tour's max_capacity (default to 8 if missing)
-  const { data: tour } = await supabase
-    .from('tours')
-    .select('max_capacity')
-    .eq('id', tourId)
-    .single()
-
-  const maxCapacity = tour?.max_capacity || 8
-
-  // Calculate active participants for this tour_date
-  const { data: existingReservations } = await supabase
-    .from('reservations')
-    .select('participants')
-    .eq('tour_date_id', tourDateId)
-    .in('status', ['WAITING FOR CONFIRMATION', 'CONFIRMED'])
-
-  const activeParticipants = existingReservations?.reduce((sum, r) => sum + (r.participants || 0), 0) || 0
-  const seatsLeft = maxCapacity - activeParticipants
-
-  // Validate: requested participants must not exceed available seats
-  if (participants > seatsLeft) {
-    return { 
-      success: false, 
-      error: `Not enough seats left. Only ${seatsLeft} seat${seatsLeft !== 1 ? 's' : ''} available.` 
-    }
-  }
-
-  // Resolve agent details server-side from app_users (don't trust client-sent
-  // name/email). The agent must be an active agent.
-  const { data: agent } = await supabase
-    .from('app_users')
-    .select('id, full_name, email')
-    .eq('id', agentUserId)
-    .eq('role', 'agent')
-    .eq('active', true)
-    .maybeSingle()
-
-  if (!agent) {
-    return { success: false, error: 'Selected agent is not valid. Please choose an active agent.' }
-  }
-
-  // Insert reservation
-  const { data: newReservation, error } = await supabase.from('reservations').insert({
-    reservation_number: reservationNumber.trim(),
-    voucher_number: voucherNumber.trim(),
-    lead_passenger_name: leadPassengerName.trim(),
-    whatsapp_number: whatsappNumber.trim(),
-    participants: participants,
-    tour_id: tourId,
-    tour_date_id: tourDateId,
-    status: 'WAITING FOR CONFIRMATION',
-    agent_user_id: agent.id,
-    agent_name: agent.full_name,
-    agent_email: agent.email,
-  }).select('id').single()
-
-  if (error) {
-    return { success: false, error: error.message }
-  }
-
-  // POST-INSERT VERIFICATION: re-fetch the inserted reservation joined to its tour_date
-  // and confirm the persisted date matches what the user selected. If it does not, this
-  // is a critical data-integrity failure — surface an error and DO NOT send the email.
-  if (newReservation) {
-    const { data: verifyRow } = await supabase
-      .from('reservations')
-      .select('id, tour_date_id, tour_dates(tour_date)')
-      .eq('id', newReservation.id)
-      .single()
-
-    const persistedTourDate = (verifyRow?.tour_dates as { tour_date?: string } | null)?.tour_date || null
-
-    // Debug snapshot of the full date chain (requirement #9).
-    console.log('[v0] booking submit verification:', {
-      selectedTourId: tourId,
-      submittedTourDateId: tourDateId,
-      selectedTourDate: selectedTourDate.tour_date,
-      insertedReservationId: newReservation.id,
-      insertedTourDateId: verifyRow?.tour_date_id,
-      persistedTourDate,
-    })
-
-    if (verifyRow?.tour_date_id !== tourDateId || persistedTourDate !== selectedTourDate.tour_date) {
-      console.error('[v0] CRITICAL booking date mismatch after insert:', {
-        submittedTourDateId: tourDateId,
-        expectedTourDate: selectedTourDate.tour_date,
-        insertedTourDateId: verifyRow?.tour_date_id,
-        persistedTourDate,
-      })
-      return {
-        success: false,
-        error: 'Booking saved with an inconsistent date. Please contact support and do not rebook this voucher.',
-      }
-    }
-  }
-
-  // Create email log for new booking. Email failure must NOT block the booking.
-  if (newReservation) {
-    try {
-      await createEmailLog({
-        reservationId: newReservation.id,
-        emailType: 'NEW_BOOKING',
-        fromEmail: 'reservation@yapantours.com',
-        toEmail: 'itai@mitiya.co',
-        cc: 'gmnatany@yapantours.com',
-        subject: `New Tour Reservation - Voucher #${voucherNumber || reservationNumber}`
-      })
-    } catch (err) {
-      console.error('[v0] new booking email failed (reservation still saved):', err)
-    }
-  }
-
-  // Live minimum-participants sync for this date only (never blocks the booking).
-  try {
-    await syncMinimumParticipantsForTourDate(tourDateId)
-  } catch (err) {
-    console.error('[v0] minimum-participants sync failed after booking:', err)
-  }
-
-  revalidatePath('/booking')
-  revalidatePath('/admin/reservations')
+  const actor = await requirePermission('booking_form_access')
+  const participants = Number(formData.get('participants'))
+  if (!Number.isSafeInteger(participants) || participants < 1) return { success: false, error: 'Participants must be a positive whole number.' }
+  const input = Object.fromEntries(['tour_id','tour_date_id','selected_tour_date','reservation_number','voucher_number','lead_passenger_name','whatsapp_number','agent_user_id'].map(key => [key, String(formData.get(key) ?? '').trim()]))
+  const { data, error } = await createClient().rpc('booking_create', { p_actor: actor.id, p_input: { ...input, participants } })
+  if (error || !data) return { success: false, error: error?.code === '23505' ? 'This voucher is already booked. Check the existing booking before trying again.' : error?.message ?? 'Booking was not saved.' }
+  await syncDates([data.tour_date_id])
+  await deliverReservationEmails([data.id])
+  refreshBookingPages()
   return { success: true }
 }

@@ -1,10 +1,11 @@
 'use server'
 
+import { getCurrentUser } from '@/lib/auth'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 
 export async function loginAction(formData: FormData) {
-  const email = (formData.get('email') as string).trim().toLowerCase()
+  const email = String(formData.get('email') ?? '').trim().toLowerCase()
   const password = formData.get('password') as string
 
   if (!email || !password) {
@@ -22,23 +23,11 @@ export async function loginAction(formData: FormData) {
     return { error: error.message }
   }
 
-  // After sign-in, validate the email exists in app_users and is active.
-  const { data: appUser } = await supabase
-    .from('app_users')
-    .select('id, active')
-    .ilike('email', email)
-    .maybeSingle()
-
+  const appUser = await getCurrentUser()
   if (!appUser) {
     await supabase.auth.signOut()
-    return { error: 'Your account is not registered in the system. Contact an administrator.' }
+    return { error: 'Your account is not active in this system. Contact an administrator.' }
   }
-
-  if (!appUser.active) {
-    await supabase.auth.signOut()
-    return { error: 'Your account has been deactivated. Contact an administrator.' }
-  }
-
   redirect('/')
 }
 

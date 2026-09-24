@@ -1,18 +1,17 @@
-// Server-only module — only imported by 'use server' files (lib/auth.ts, users/actions.ts).
-// No 'use server' directive here because getServiceRoleClient() is a sync function and
-// Turbopack requires all exports in 'use server' modules to be async.
-import { createClient } from '@supabase/supabase-js'
+import 'server-only'
+// The server-only import prevents this privileged client from entering browser bundles.
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { normalizeSupabaseUrl } from '@/lib/supabase/url'
 
 /**
  * Service-role client singleton — one instance per cold start.
  * Extracted from lib/auth.ts so it can be shared without duplicating logic.
- * This module is 'use server' — never bundled into the browser.
+ * Callers must authenticate the user and check the required permission first.
  * Safe because:
  *   1. Identity is always verified by the caller before any service-role query.
  *   2. persistSession and autoRefreshToken are disabled — no token leakage.
  */
-let _serviceClient: ReturnType<typeof createClient> | null = null
+let _serviceClient: SupabaseClient | null = null
 
 export function getServiceRoleClient() {
   if (_serviceClient) return _serviceClient

@@ -1,6 +1,7 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
+import { getServiceRoleClient as createClient } from '@/lib/supabase-admin'
+import { requirePermission, safeSearch } from '@/lib/authorization'
 
 export interface TourAvailability {
   tour_id: string
@@ -18,6 +19,8 @@ export interface TourAvailability {
 
 // Fetch all active tours for the filter dropdown
 export async function fetchToursForFilter() {
+  await requirePermission("availability_view_access")
+
   const supabase = await createClient()
   
   const { data, error } = await supabase
@@ -40,17 +43,10 @@ async function getActiveParticipantsByDate(
   tourDateIds: string[]
 ): Promise<Map<string, number>> {
   const map = new Map<string, number>()
-  if (tourDateIds.length === 0) return map
-
-  const { data } = await supabase
-    .from('reservations')
-    .select('tour_date_id, participants')
-    .in('tour_date_id', tourDateIds)
-    .in('status', ['WAITING FOR CONFIRMATION', 'CONFIRMED'])
-
-  for (const r of data || []) {
-    map.set(r.tour_date_id, (map.get(r.tour_date_id) || 0) + (r.participants || 0))
-  }
+  if (!tourDateIds.length) return map
+  const { data, error } = await supabase.rpc('booking_participant_counts', { p_ids: tourDateIds })
+  if (error) throw new Error('Availability could not be verified. Please try again.')
+  for (const r of data ?? []) map.set(r.tour_date_id, Number(r.participants))
   return map
 }
 
@@ -79,6 +75,8 @@ export async function fetchAvailabilityForCalendar(
   month: number, 
   tourId?: string // optional filter by tour
 ) {
+  await requirePermission("availability_view_access")
+
   const supabase = await createClient()
   
   // Build date range for the month
@@ -154,6 +152,8 @@ export async function fetchAvailabilityForCalendar(
 
 // Fetch upcoming availability list (next 60 days)
 export async function fetchUpcomingAvailability(tourId?: string) {
+  await requirePermission("availability_view_access")
+
   const supabase = await createClient()
   
   // Calculate date range: today to 60 days from now

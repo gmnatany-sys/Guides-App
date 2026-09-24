@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useTransition } from 'react'
+import { useState, useEffect, useTransition, useRef } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -113,19 +113,28 @@ export default function ReservationsClient({ initialPermissions }: Props) {
   const [dateTo, setDateTo] = useState('')
   const [search, setSearch] = useState('')
 
-  const loadData = async (filters: ReservationFilters = {}) => {
+  const requestId = useRef(0)
+  const appliedFilters = useRef<ReservationFilters>({})
+  const [hasMore, setHasMore] = useState(false)
+  const loadData = async (filters: ReservationFilters = {}, append = false) => {
+    const request = ++requestId.current
+    try {
     const [reservationsResult, toursResult] = await Promise.all([
       fetchReservations(filters),
       fetchTours()
     ])
+    if (request !== requestId.current) return
     if (reservationsResult.error) {
       setMessage({ type: 'error', text: reservationsResult.error })
     } else {
-      setReservations(reservationsResult.reservations)
+      setReservations(previous => append ? [...previous, ...reservationsResult.reservations] : reservationsResult.reservations)
+      setHasMore(reservationsResult.reservations.length === 100)
+      appliedFilters.current = filters
     }
     if (!toursResult.error) {
       setTours(toursResult.tours)
     }
+    } catch (error) { if (request === requestId.current) setMessage({type:'error', text:error instanceof Error ? error.message : 'Could not load reservations.'}) }
   }
 
   // Permissions arrive instantly via initialPermissions — no getMyPermissions useEffect needed.
@@ -134,13 +143,13 @@ export default function ReservationsClient({ initialPermissions }: Props) {
     loadData()
   }, [])
 
-  const currentFilters = (): ReservationFilters => ({
+  const currentFilters = (): ReservationFilters => canSearch ? ({
     status: statusFilter,
     tourId: tourFilter,
     dateFrom,
     dateTo,
     search,
-  })
+  }) : ({})
 
   const handleFilter = () => {
     startTransition(async () => {
@@ -240,7 +249,7 @@ export default function ReservationsClient({ initialPermissions }: Props) {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
             <div className="space-y-2">
               <Label>Status</Label>
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <Select value={statusFilter} onValueChange={value => { if (value !== null) setStatusFilter(value) }}>
                 <SelectTrigger>
                   <SelectValue placeholder="All" />
                 </SelectTrigger>
@@ -256,7 +265,7 @@ export default function ReservationsClient({ initialPermissions }: Props) {
 
             <div className="space-y-2">
               <Label>Tour</Label>
-              <Select value={tourFilter} onValueChange={setTourFilter}>
+              <Select value={tourFilter} onValueChange={value => { if (value !== null) setTourFilter(value) }}>
                 <SelectTrigger>
                   <SelectValue placeholder="All Tours">
                     {tourFilter === 'all' ? 'All Tours' : tours.find(t => t.id === tourFilter)?.name || 'All Tours'}
@@ -311,6 +320,7 @@ export default function ReservationsClient({ initialPermissions }: Props) {
           </div>
         </CardContent>
       </Card>
+      {hasMore && <Button disabled={isPending} onClick={() => startTransition(async () => { await loadData({...appliedFilters.current, offset:reservations.length}, true) })}>Load more reservations</Button>}
 
       {/* Reservations Table */}
       <Card>

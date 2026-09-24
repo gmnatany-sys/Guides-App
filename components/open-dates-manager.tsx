@@ -149,7 +149,7 @@ export function OpenDatesManager() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="tour_id">Tour</Label>
-                <Select value={selectedTourId} onValueChange={setSelectedTourId}>
+                <Select value={selectedTourId} onValueChange={value => { if (value !== null) setSelectedTourId(value) }}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select a tour">
                       {tours.find(t => t.id === selectedTourId)?.name || 'Select a tour'}
@@ -178,7 +178,7 @@ export function OpenDatesManager() {
 
               <div className="space-y-2">
                 <Label htmlFor="supplier_status">Supplier Status</Label>
-                <Select value={supplierStatus} onValueChange={setSupplierStatus}>
+                <Select value={supplierStatus} onValueChange={value => { if (value !== null) setSupplierStatus(value) }}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>

@@ -1,0 +1,78 @@
+name: Database safety
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  migration-package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.117.0
+      - name: Generate staged migration files with the official CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          supabase --version
+          supabase --help
+          supabase init --help
+          supabase migration --help
+          supabase migration new --help
+          if [ ! -f supabase/migrations/20260924194130_booking_prepare.sql ]; then
+            supabase init
+            supabase migration new booking_prepare
+            cp database/prepare-remediation.sql supabase/migrations/*_booking_prepare.sql
+            sleep 2
+            supabase migration new booking_lockdown
+            cp database/lockdown-remediation.sql supabase/migrations/*_booking_lockdown.sql
+          fi
+          python3 - <<'PY'
+          import hashlib, json, pathlib
+          files = sorted(pathlib.Path('supabase/migrations').glob('*.sql'))
+          manifest = []
+          for name, source in [('booking_prepare', 'prepare-remediation.sql'), ('booking_lockdown', 'lockdown-remediation.sql')]:
+              matches = [p for p in files if p.name.endswith('_' + name + '.sql')]
+              assert len(matches) == 1, matches
+              path = matches[0]
+              data = path.read_bytes()
+              assert data == pathlib.Path('database', source).read_bytes()
+              manifest.append({'file': str(path), 'sha256': hashlib.sha256(data).hexdigest()})
+          assert len({entry['file'].split('/')[-1].split('_')[0] for entry in manifest}) == 2
+          result = json.dumps(manifest, indent=2)
+          pathlib.Path('migration-manifest.json').write_text(result + '\n')
+          print(result)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: booking-staged-migrations
+          path: |
+            supabase/migrations/*_booking_prepare.sql
+            supabase/migrations/*_booking_lockdown.sql
+            migration-manifest.json
+          retention-days: 30
+  concurrency:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17.11
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: local-test-only
+          POSTGRES_DB: guides_remediation_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test competing bookings, cancellations, confirmations and email claims
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:local-test-only@127.0.0.1:5432/guides_remediation_test
+        run: python3 tests/postgres_concurrency.py
+

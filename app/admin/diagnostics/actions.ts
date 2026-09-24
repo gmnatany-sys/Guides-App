@@ -1,6 +1,7 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
+import { getServiceRoleClient as createClient } from '@/lib/supabase-admin'
+import { requirePermission, safeSearch } from '@/lib/authorization'
 import { normalizeSupabaseUrl } from '@/lib/supabase/url'
 
 // The single Supabase project the app is wired to. Mirrors lib/supabase/server.ts.
@@ -20,6 +21,8 @@ export interface DiagnosticsSummary {
 // Lightweight overview. Uses count-only (head: true) queries so no large table
 // rows are ever transferred. Runs only when the user opens the page / clicks refresh.
 export async function fetchDiagnosticsSummary(): Promise<DiagnosticsSummary> {
+  await requirePermission("email_logs_view_access")
+
   const base: DiagnosticsSummary = {
     supabaseProject: EXPECTED_PROJECT_REF,
     supabaseUrl: SUPABASE_URL,
@@ -68,6 +71,8 @@ export async function fetchDiagnosticsSummary(): Promise<DiagnosticsSummary> {
 
 // Quick connectivity probe: a single count-only query. Returns ok/error fast.
 export async function testSupabaseConnection(): Promise<{ ok: boolean; message: string }> {
+  await requirePermission("email_logs_view_access")
+
   try {
     const supabase = await createClient()
     const { error } = await supabase
@@ -84,6 +89,8 @@ export async function testSupabaseConnection(): Promise<{ ok: boolean; message: 
 
 // Resend configuration check. Only inspects env presence — never sends an email.
 export async function testResendConfiguration(): Promise<{ ok: boolean; message: string }> {
+  await requirePermission("email_logs_view_access")
+
   const key = process.env.RESEND_API_KEY
   if (!key) {
     return { ok: false, message: 'RESEND_API_KEY is not set.' }
@@ -93,6 +100,8 @@ export async function testResendConfiguration(): Promise<{ ok: boolean; message:
 
 // Confirms the app is pointed at the expected project and not a stale one.
 export async function checkProjectReferences(): Promise<{ ok: boolean; message: string }> {
+  await requirePermission("email_logs_view_access")
+
   const usesExpected = SUPABASE_URL.includes(EXPECTED_PROJECT_REF)
   if (!usesExpected) {
     return { ok: false, message: `Unexpected Supabase URL: ${SUPABASE_URL}` }

@@ -1,11 +1,11 @@
 export interface Tour {
   id: string
   name: string
-  description: string | null
+  description?: string | null
   active?: boolean
   max_capacity?: number
-  created_at: string
-  updated_at: string
+  created_at?: string
+  updated_at?: string
 }
 
 export interface TourDate {
@@ -17,7 +17,7 @@ export interface TourDate {
   notes: string | null
   created_at: string
   updated_at: string
-  tours?: Tour
+  tours?: Pick<Tour, 'name'>
 }
 
 export interface Reservation {
