@@ -669,7 +669,11 @@ export default function MinimumParticipantsClient({ canAction }: { canAction: bo
                   </TableBody>
                 </Table>
               ) : (
-                <p className="text-sm text-muted-foreground">No reservations were processed.</p>
+                <p className="text-sm text-muted-foreground">
+                  {cancellationResult.reservationsCancelled > 0
+                    ? 'Cancellation saved. Check Email Logs for notification delivery status.'
+                    : 'No reservations were processed.'}
+                </p>
               )}
             </CardContent>
           </Card>
