@@ -45,6 +45,7 @@ export default function AvailabilityPage() {
   const [isLoadingUpcoming, setIsLoadingUpcoming] = useState(false)
   const [isPending, startTransition] = useTransition()
   
+  const [loadError, setLoadError] = useState<string | null>(null)
   // Calendar state
   const [currentMonth, setCurrentMonth] = useState(() => {
     const now = new Date()
@@ -68,6 +69,7 @@ export default function AvailabilityPage() {
 
   // Load calendar data when month or tour filter changes
   useEffect(() => {
+    let ignore = false
     async function loadCalendarData() {
       setIsLoadingCalendar(true)
       try {
@@ -76,34 +78,44 @@ export default function AvailabilityPage() {
           currentMonth.month, 
           selectedTourId === 'all' ? undefined : selectedTourId
         )
+        if (ignore) return
+        if (result.error) throw new Error(result.error)
+        setLoadError(null)
         setCalendarData(result.availability || [])
       } catch (err) {
-        console.error('[v0] availability loadCalendarData failed:', err)
+        if (ignore) return
+        setLoadError(err instanceof Error ? err.message : 'Availability could not be loaded.')
         setCalendarData([])
       } finally {
-        setIsLoadingCalendar(false)
+        if (!ignore) setIsLoadingCalendar(false)
       }
     }
     loadCalendarData()
+    return () => { ignore = true }
   }, [currentMonth, selectedTourId])
 
   // Load upcoming data when tour filter changes
   useEffect(() => {
+    let ignore = false
     async function loadUpcomingData() {
       setIsLoadingUpcoming(true)
       try {
         const result = await fetchUpcomingAvailability(
           selectedTourId === 'all' ? undefined : selectedTourId
         )
+        if (ignore) return
+        if (result.error) throw new Error(result.error)
         setUpcomingData(result.upcoming || [])
       } catch (err) {
-        console.error('[v0] availability loadUpcomingData failed:', err)
+        if (ignore) return
+        setLoadError(err instanceof Error ? err.message : 'Availability could not be loaded.')
         setUpcomingData([])
       } finally {
-        setIsLoadingUpcoming(false)
+        if (!ignore) setIsLoadingUpcoming(false)
       }
     }
     loadUpcomingData()
+    return () => { ignore = true }
   }, [selectedTourId])
 
   // Calendar navigation
@@ -160,6 +172,7 @@ export default function AvailabilityPage() {
 
   return (
     <div className="min-h-screen bg-slate-50">
+      {loadError && <p role="alert" className="text-red-600">{loadError}</p>}
       {/* Header */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6">
@@ -184,7 +197,7 @@ export default function AvailabilityPage() {
             <CardTitle className="text-base">Filter by Tour</CardTitle>
           </CardHeader>
           <CardContent>
-            <Select value={selectedTourId} onValueChange={setSelectedTourId}>
+            <Select value={selectedTourId} onValueChange={value => { if (value !== null) setSelectedTourId(value) }}>
               <SelectTrigger className="w-full sm:w-80">
                 <SelectValue placeholder="Select a tour" />
               </SelectTrigger>
