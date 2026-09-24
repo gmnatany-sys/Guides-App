@@ -142,7 +142,7 @@ export default function SupplierAvailabilityPage() {
 
               <div className="space-y-2">
                 <Label htmlFor="tour_id" className="text-slate-700">Tour</Label>
-                <Select value={selectedTourId} onValueChange={setSelectedTourId}>
+                <Select value={selectedTourId} onValueChange={value => { if (value !== null) setSelectedTourId(value) }}>
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="Select a tour">
                       {tours.find(t => t.id === selectedTourId)?.name || 'Select a tour'}
@@ -172,7 +172,7 @@ export default function SupplierAvailabilityPage() {
 
               <div className="space-y-2">
                 <Label htmlFor="status" className="text-slate-700">Status</Label>
-                <Select value={status} onValueChange={setStatus}>
+                <Select value={status} onValueChange={value => { if (value !== null) setStatus(value) }}>
                   <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>
