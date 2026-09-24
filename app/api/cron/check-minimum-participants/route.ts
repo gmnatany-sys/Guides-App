@@ -1,41 +1,21 @@
 import { NextResponse } from 'next/server'
-import { checkAndCreateAlerts } from '@/app/admin/alerts/actions'
+import { timingSafeEqual } from 'node:crypto'
+import { checkAndCreateAlerts } from '@/lib/minimum-participants'
+import { processEmailOutbox } from '@/lib/email-log'
 
-// This endpoint should be called by a cron job daily
-// Configure in vercel.json: { "crons": [{ "path": "/api/cron/check-minimum-participants", "schedule": "0 9 * * *" }] }
-
+export const maxDuration = 60
 export async function GET(request: Request) {
-  // Verify cron secret in production
-  const authHeader = request.headers.get('authorization')
-  if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-  
+  const secret = process.env.CRON_SECRET
+  if (!secret) return NextResponse.json({success:false,error:'Cron is not configured.'},{status:503})
+  const expected=Buffer.from('Bearer '+secret),actual=Buffer.from(request.headers.get('authorization') ?? '')
+  if(expected.length!==actual.length || !timingSafeEqual(expected,actual)) return NextResponse.json({success:false,error:'Unauthorized'},{status:401})
   try {
-    const result = await checkAndCreateAlerts()
-    
-    if (result.success) {
-      return NextResponse.json({
-        success: true,
-        message: `Checked for low participant tours. Created ${result.alertsCreated} alerts.`,
-        alertsCreated: result.alertsCreated
-      })
-    } else {
-      return NextResponse.json({
-        success: false,
-        error: result.error
-      }, { status: 500 })
-    }
-  } catch (error) {
-    console.error('Error in cron job:', error)
-    return NextResponse.json({
-      success: false,
-      error: 'Internal server error'
-    }, { status: 500 })
+    const result=await checkAndCreateAlerts()
+    if(!result.success) return NextResponse.json(result,{status:500})
+    const delivery=await processEmailOutbox({limit:20})
+    return NextResponse.json({...result,delivery,success:delivery.success},{status:delivery.success?200:500})
+  } catch {
+    return NextResponse.json({success:false,error:'Scheduled processing failed.'},{status:500})
   }
 }
-
-// Also allow POST for manual triggering
-export async function POST(request: Request) {
-  return GET(request)
-}
+export async function POST(request: Request) { return GET(request) }
