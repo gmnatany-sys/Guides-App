@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -20,6 +20,16 @@ export default function AvailabilityCalendarPage() {
   const [processing, setProcessing] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
   const [showCancelConfirm, setShowCancelConfirm] = useState(false)
+  const [datesReady, setDatesReady] = useState(false)
+  const [datesLoading, setDatesLoading] = useState(false)
+  const dateRequest = useRef(0)
+
+  const invalidateDates = () => {
+    dateRequest.current += 1
+    setDatesReady(false)
+    setTourDates([])
+    setShowCancelConfirm(false)
+  }
 
   // Load tours on mount
   useEffect(() => {
@@ -43,21 +53,34 @@ export default function AvailabilityCalendarPage() {
 
   // Load tour dates when tour or month changes
   const loadTourDates = useCallback(async () => {
-    if (!selectedTourId) return
-    
+    const request = ++dateRequest.current
+    setDatesReady(false)
+    setTourDates([])
+    if (!selectedTourId) {
+      setDatesLoading(false)
+      return
+    }
+    setDatesLoading(true)
     const year = currentDate.getFullYear()
     const month = currentDate.getMonth() + 1
     try {
       const result = await fetchTourDatesForMonth(selectedTourId, year, month)
+      if (request !== dateRequest.current) return
+      if (result.error) throw new Error(result.error)
       setTourDates(result.tourDates as TourDate[])
+      setDatesReady(true)
     } catch (err) {
+      if (request !== dateRequest.current) return
       console.error('[v0] open-dates/new loadTourDates failed:', err)
       setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Failed to load tour dates.' })
+    } finally {
+      if (request === dateRequest.current) setDatesLoading(false)
     }
   }, [selectedTourId, currentDate])
 
   useEffect(() => {
     loadTourDates()
+    return () => { dateRequest.current += 1 }
   }, [loadTourDates])
 
   // Get calendar data for current month
@@ -117,13 +140,15 @@ export default function AvailabilityCalendarPage() {
 
   // Navigate months
   const prevMonth = () => {
-    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1))
+    invalidateDates()
+    setCurrentDate(date => new Date(date.getFullYear(), date.getMonth() - 1, 1))
     setSelectedDates(new Set())
     setMessage(null)
   }
 
   const nextMonth = () => {
-    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1))
+    invalidateDates()
+    setCurrentDate(date => new Date(date.getFullYear(), date.getMonth() + 1, 1))
     setSelectedDates(new Set())
     setMessage(null)
   }
@@ -149,7 +174,7 @@ export default function AvailabilityCalendarPage() {
 
   // Bulk actions
   const handleOpenSelected = async () => {
-    if (selectedDates.size === 0 || !selectedTourId) return
+    if (selectedDates.size === 0 || !selectedTourId || !datesReady || processing) return
     setProcessing(true)
     setMessage(null)
     
@@ -183,7 +208,7 @@ export default function AvailabilityCalendarPage() {
   }
 
   const handleCancelSelected = async () => {
-    if (selectedDates.size === 0 || !selectedTourId) return
+    if (selectedDates.size === 0 || !selectedTourId || !datesReady || processing) return
     setProcessing(true)
     setMessage(null)
     setShowCancelConfirm(false)
@@ -238,7 +263,8 @@ export default function AvailabilityCalendarPage() {
           <CardTitle className="text-base">Select Tour</CardTitle>
         </CardHeader>
         <CardContent>
-          <Select value={selectedTourId} onValueChange={(value) => {
+          <Select value={selectedTourId} disabled={processing} onValueChange={(value) => {
+            invalidateDates()
             setSelectedTourId(value ?? '')
             setSelectedDates(new Set())
             setMessage(null)
@@ -265,11 +291,11 @@ export default function AvailabilityCalendarPage() {
           <div className="flex items-center justify-between">
             <CardTitle className="text-base">Calendar</CardTitle>
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="icon" onClick={prevMonth}>
+              <Button variant="outline" size="icon" onClick={prevMonth} disabled={processing} aria-label="Previous month">
                 <ChevronLeft className="h-4 w-4" />
               </Button>
               <span className="font-medium min-w-[160px] text-center">{monthYear}</span>
-              <Button variant="outline" size="icon" onClick={nextMonth}>
+              <Button variant="outline" size="icon" onClick={nextMonth} disabled={processing} aria-label="Next month">
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
@@ -277,6 +303,7 @@ export default function AvailabilityCalendarPage() {
         </CardHeader>
         <CardContent>
           {/* Days of week header */}
+          {datesLoading && <p role="status" className="mb-2 text-sm text-muted-foreground">Loading availability...</p>}
           <div className="grid grid-cols-7 gap-1 mb-2">
             {DAYS_OF_WEEK.map((day) => (
               <div key={day} className="text-center text-sm font-medium text-muted-foreground py-2">
@@ -299,6 +326,9 @@ export default function AvailabilityCalendarPage() {
                 <button
                   key={day}
                   onClick={() => toggleDate(day)}
+                  disabled={!datesReady || processing}
+                  aria-label={`${formatDateString(day)}: ${datesReady ? (isOpen ? 'Open' : 'Closed') : 'Unavailable'}`}
+                  aria-pressed={isSelected}
                   className={`
                     aspect-square flex items-center justify-center rounded-md text-sm font-medium
                     transition-colors border-2
@@ -366,7 +396,7 @@ export default function AvailabilityCalendarPage() {
               <div className="flex gap-2">
                 <Button
                   onClick={handleCancelSelected}
-                  disabled={processing}
+                  disabled={processing || !datesReady}
                   className="bg-red-600 hover:bg-red-700"
                 >
                   {processing ? 'Cancelling...' : 'Yes, Cancel Dates'}
@@ -386,14 +416,14 @@ export default function AvailabilityCalendarPage() {
             <div className="flex flex-wrap gap-3">
               <Button
                 onClick={handleOpenSelected}
-                disabled={selectedDates.size === 0 || closedCount === 0 || processing}
+                disabled={selectedDates.size === 0 || closedCount === 0 || processing || !datesReady}
                 className="bg-green-600 hover:bg-green-700"
               >
                 {processing ? 'Processing...' : `Open Selected Dates (${closedCount})`}
               </Button>
               <Button
                 onClick={() => setShowCancelConfirm(true)}
-                disabled={selectedDates.size === 0 || openCount === 0 || processing}
+                disabled={selectedDates.size === 0 || openCount === 0 || processing || !datesReady}
                 variant="outline"
                 className="border-red-300 text-red-700 hover:bg-red-50"
               >
