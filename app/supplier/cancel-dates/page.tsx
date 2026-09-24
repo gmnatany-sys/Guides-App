@@ -240,7 +240,7 @@ export default function SupplierCancelDatesPage() {
         </CardHeader>
         <CardContent>
           <Select value={selectedTourId} onValueChange={(value) => {
-            setSelectedTourId(value)
+            setSelectedTourId(value ?? '')
             setSelectedDates(new Set())
           }}>
             <SelectTrigger className="w-full max-w-md">
