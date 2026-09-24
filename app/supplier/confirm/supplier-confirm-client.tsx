@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useTransition } from 'react'
+import { useState, useEffect, useTransition, useRef } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -36,20 +36,29 @@ export default function SupplierConfirmClient({ initialPermissions }: Props) {
 
   const canAction = myPermissions.includes('supplier_confirmation_action')
 
-  const loadData = async () => {
+  const requestId = useRef(0)
+  const appliedSearch = useRef('')
+  const [hasMore, setHasMore] = useState(false)
+  const loadData = async (append = false) => {
+    const request = ++requestId.current
+    const query = append ? appliedSearch.current : search
+    if (!append) appliedSearch.current = query
     setIsLoading(true)
     try {
       const [reservationsResult, countsResult] = await Promise.all([
-        fetchReservationsByStatus(activeTab, search),
+        fetchReservationsByStatus(activeTab, query, append ? reservations.length : 0),
         fetchAllReservationCounts()
       ])
-      setReservations(reservationsResult.reservations)
+      if (request !== requestId.current) return
+      if (reservationsResult.error) throw new Error(reservationsResult.error)
+      setReservations(previous => append ? [...previous,...reservationsResult.reservations] : reservationsResult.reservations)
+      setHasMore(reservationsResult.reservations.length===100)
       setCounts(countsResult)
     } catch (err) {
-      console.error('[v0] supplier/confirm loadData failed:', err)
+      if (request !== requestId.current) return
       setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Failed to load reservations.' })
     } finally {
-      setIsLoading(false)
+      if (request === requestId.current) setIsLoading(false)
     }
   }
 
@@ -384,6 +393,7 @@ export default function SupplierConfirmClient({ initialPermissions }: Props) {
           ))}
         </Tabs>
       </div>
+      {hasMore && <Button disabled={isLoading} onClick={() => loadData(true)}>Load more reservations</Button>}
     </div>
   )
 }
