@@ -81,7 +81,7 @@ export async function fetchBookingInitialData() {
   }
 }
 
-export async function fetchAvailableDates(tourId: string) {
+export async function fetchAvailableDates(tourId: string, guideId?: string) {
   await requirePermission("booking_form_access")
 
   const supabase = await createClient()
@@ -99,7 +99,9 @@ export async function fetchAvailableDates(tourId: string) {
   // Get open tour_dates for this tour
   const { data: tourDates, error: datesError } = await supabase
     .from('tour_dates')
-    .select('id, tour_date')
+    .select('id, tour_date, guide_user_id, capacity, guide:app_users!tour_dates_guide_user_id_fkey!inner(full_name,active,role)')
+    .eq('guide.active',true).eq('guide.role','supplier')
+    .match(guideId ? {guide_user_id:guideId} : {})
     .eq('tour_id', tourId)
     .eq('is_open', true)
     .order('tour_date', { ascending: true })
@@ -118,11 +120,12 @@ export async function fetchAvailableDates(tourId: string) {
   const availableDates = []
   for (const td of tourDates) {
     const activeParticipants = participantsByDate.get(td.id) || 0
-    const seatsLeft = maxCapacity - activeParticipants
+    const seatsLeft = td.capacity - activeParticipants
 
     if (seatsLeft > 0) {
       availableDates.push({
         id: td.id,
+        guide_user_id: td.guide_user_id,
         tour_date: td.tour_date,
         seats_left: seatsLeft
       })
@@ -147,7 +150,7 @@ async function getActiveParticipantsByDate(
 }
 
 // Fetch tour dates for a specific month - includes closed/full dates for calendar display
-export async function fetchTourDatesForCalendar(tourId: string, year: number, month: number) {
+export async function fetchTourDatesForCalendar(tourId: string, year: number, month: number, guideId?: string) {
   await requirePermission("booking_form_access")
 
   const t0 = Date.now()
@@ -169,7 +172,9 @@ export async function fetchTourDatesForCalendar(tourId: string, year: number, mo
       .single(),
     supabase
       .from('tour_dates')
-      .select('id, tour_id, tour_date, is_open, supplier_status')
+      .select('id, tour_id, tour_date, is_open, supplier_status, guide_user_id, capacity, guide:app_users!tour_dates_guide_user_id_fkey!inner(full_name,active,role)')
+      .eq('guide.active',true).eq('guide.role','supplier')
+      .match(guideId ? {guide_user_id:guideId} : {})
       .eq('tour_id', tourId)
       .gte('tour_date', startDate)
       .lte('tour_date', endDate)
@@ -193,9 +198,10 @@ export async function fetchTourDatesForCalendar(tourId: string, year: number, mo
 
   const calendarDates = (tourDates || []).map((td) => {
     const activeParticipants = participantsByDate.get(td.id) || 0
-    const seatsLeft = maxCapacity - activeParticipants
+    const seatsLeft = td.capacity - activeParticipants
     return {
       id: td.id,
+        guide_user_id: td.guide_user_id,
       tour_id: td.tour_id,
       tour_date: td.tour_date,
       is_open: td.is_open,
@@ -213,7 +219,7 @@ export async function submitBooking(formData: FormData) {
   const actor = await requirePermission('booking_form_access')
   const participants = Number(formData.get('participants'))
   if (!Number.isSafeInteger(participants) || participants < 1) return { success: false, error: 'Participants must be a positive whole number.' }
-  const input = Object.fromEntries(['tour_id','tour_date_id','selected_tour_date','reservation_number','voucher_number','lead_passenger_name','whatsapp_number','agent_user_id'].map(key => [key, String(formData.get(key) ?? '').trim()]))
+  const input = Object.fromEntries(['guide_user_id','tour_id','tour_date_id','selected_tour_date','reservation_number','voucher_number','lead_passenger_name','whatsapp_number','agent_user_id'].map(key => [key, String(formData.get(key) ?? '').trim()]))
   const { data, error } = await createClient().rpc('booking_create', { p_actor: actor.id, p_input: { ...input, participants } })
   if (error || !data) return { success: false, error: error?.code === '23505' ? 'This voucher is already booked. Check the existing booking before trying again.' : error?.message ?? 'Booking was not saved.' }
   await syncDates([data.tour_date_id])
