@@ -1,1 +1,3 @@
-{"$schema":"https://openapi.vercel.sh/vercel.json","git":{"deploymentEnabled":{"feature/multi-guide":false}}}
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json"
+}
