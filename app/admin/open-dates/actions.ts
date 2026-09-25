@@ -12,7 +12,7 @@ export async function fetchToursAndDates() {
   
   const [toursResult, tourDatesResult] = await Promise.all([
     supabase.from('tours').select('*').order('name'),
-    supabase.from('tour_dates').select('*, tours(name)').order('tour_date', { ascending: true })
+    supabase.from('tour_dates').select('*, tours(name), guide:app_users!tour_dates_guide_user_id_fkey(full_name)').order('tour_date', { ascending: true })
   ])
 
   return {
@@ -27,11 +27,11 @@ export async function addOpenDate(formData: FormData) {
 }
 
 export async function upsertOpenDate(formData: FormData) {
-  return setDates(String(formData.get('tour_id') ?? ''), [String(formData.get('tour_date') ?? '')], formData.get('is_open') === 'true', String(formData.get('supplier_status') ?? 'NO'), 'availability_calendar_manage_access', String(formData.get('notes') ?? ''))
+  return setDates(String(formData.get('tour_id') ?? ''), [String(formData.get('tour_date') ?? '')], formData.get('is_open') === 'true', String(formData.get('supplier_status') ?? 'NO'), 'availability_calendar_manage_access', String(formData.get('notes') ?? ''), String(formData.get('guide_user_id') ?? '') || undefined)
 }
 
 // Fetch tour dates for a specific tour and month
-export async function fetchTourDatesForMonth(tourId: string, year: number, month: number) {
+export async function fetchTourDatesForMonth(tourId: string, year: number, month: number, guideId?: string) {
   await requirePermission("availability_calendar_manage_access")
 
   const supabase = await createClient()
@@ -46,6 +46,7 @@ export async function fetchTourDatesForMonth(tourId: string, year: number, month
     .from('tour_dates')
     .select('*')
     .eq('tour_id', tourId)
+    .match(guideId ? {guide_user_id:guideId} : {})
     .gte('tour_date', startDate)
     .lte('tour_date', endDate)
   
@@ -57,16 +58,16 @@ export async function fetchTourDatesForMonth(tourId: string, year: number, month
 }
 
 // Bulk upsert dates - open selected dates
-export async function bulkOpenDates(tourId: string, dates: string[]) {
-  return setDates(tourId, dates, true, 'YES', 'availability_calendar_manage_access')
+export async function bulkOpenDates(tourId: string, dates: string[], guideId?: string) {
+  return setDates(tourId, dates, true, 'YES', 'availability_calendar_manage_access', undefined, guideId)
 }
 
 // Bulk upsert dates - close selected dates
-export async function bulkCloseDates(tourId: string, dates: string[]) {
-  return setDates(tourId, dates, false, 'NO', 'availability_calendar_manage_access')
+export async function bulkCloseDates(tourId: string, dates: string[], guideId?: string) {
+  return setDates(tourId, dates, false, 'NO', 'availability_calendar_manage_access', undefined, guideId)
 }
 
 // Cancel selected dates - sets is_open=false, supplier_status=CANCELLED, cancels reservations, sends emails immediately
-export async function cancelSelectedDates(tourId: string, dates: string[]) {
-  return setDates(tourId, dates, false, 'CANCELLED', 'availability_calendar_manage_access', 'Tour date cancelled from Availability Calendar.')
+export async function cancelSelectedDates(tourId: string, dates: string[], guideId?: string) {
+  return setDates(tourId, dates, false, 'CANCELLED', 'availability_calendar_manage_access', 'Tour date cancelled from Availability Calendar.', guideId)
 }
