@@ -22,6 +22,7 @@ import {
   fetchRecentlyCancelledDates,
   cancelSelectedDates 
 } from './actions'
+import { GuidePicker } from '@/components/guide-picker'
 import type { Tour, TourDate } from '@/lib/types'
 
 const DAYS_OF_WEEK = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -34,6 +35,7 @@ interface CancelledDateWithCount extends TourDate {
 export default function SupplierCancelDatesPage() {
   const [tours, setTours] = useState<Tour[]>([])
   const [selectedTourId, setSelectedTourId] = useState<string>('')
+  const [selectedGuideId,setSelectedGuideId]=useState('')
   const [currentDate, setCurrentDate] = useState(new Date())
   const [tourDates, setTourDates] = useState<TourDate[]>([])
   const [selectedDates, setSelectedDates] = useState<Set<string>>(new Set())
@@ -79,7 +81,7 @@ export default function SupplierCancelDatesPage() {
     const request = ++dateRequest.current
     setDatesReady(false)
     setTourDates([])
-    if (!selectedTourId) {
+    if (!selectedTourId || !selectedGuideId) {
       setDatesLoading(false)
       return
     }
@@ -87,7 +89,7 @@ export default function SupplierCancelDatesPage() {
     const year = currentDate.getFullYear()
     const month = currentDate.getMonth() + 1
     try {
-      const result = await fetchOpenTourDatesForMonth(selectedTourId, year, month)
+      const result = await fetchOpenTourDatesForMonth(selectedTourId, year, month,selectedGuideId)
       if (request !== dateRequest.current) return
       if (result.error) throw new Error(result.error)
       setTourDates(result.tourDates as TourDate[])
@@ -99,7 +101,7 @@ export default function SupplierCancelDatesPage() {
     } finally {
       if (request === dateRequest.current) setDatesLoading(false)
     }
-  }, [selectedTourId, currentDate])
+  }, [selectedTourId, selectedGuideId,currentDate])
 
   // Load recently cancelled dates
   const loadCancelledDates = useCallback(async () => {
@@ -205,7 +207,7 @@ export default function SupplierCancelDatesPage() {
       const result = await cancelSelectedDates(
         selectedTourId, 
         Array.from(selectedDates), 
-        cancellationNotes
+        cancellationNotes,selectedGuideId
       )
 
       if (result.success) {
@@ -273,7 +275,7 @@ export default function SupplierCancelDatesPage() {
         <CardContent>
           <Select value={selectedTourId} disabled={processing} onValueChange={(value) => {
             invalidateDates()
-            setSelectedTourId(value ?? '')
+            setSelectedGuideId(''); setSelectedTourId(value ?? '')
             setSelectedDates(new Set())
           }}>
             <SelectTrigger className="w-full max-w-md">
@@ -291,6 +293,7 @@ export default function SupplierCancelDatesPage() {
       </Card>
 
       {/* Calendar */}
+      {selectedTourId && <GuidePicker tourId={selectedTourId} value={selectedGuideId} disabled={processing} onChange={id=>{invalidateDates();setSelectedDates(new Set());setSelectedGuideId(id)}}/>}
       <Card>
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
@@ -475,7 +478,7 @@ export default function SupplierCancelDatesPage() {
                   {cancelledDates.map((date) => (
                     <TableRow key={date.id}>
                       <TableCell className="font-medium">{formatDate(date.tour_date)}</TableCell>
-                      <TableCell>{date.tours?.name || 'N/A'}</TableCell>
+                      <TableCell>{date.tours?.name || 'N/A'}<span className="block text-xs text-muted-foreground">{date.guide?.full_name}</span></TableCell>
                       <TableCell>
                         <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">
                           {date.cancelled_reservations_count}
