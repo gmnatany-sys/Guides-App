@@ -14,6 +14,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Card, CardContent } from '@/components/ui/card'
+import { GuidePicker } from '@/components/guide-picker'
 import type { Tour, TourDate } from '@/lib/types'
 
 function StatusBadge({ status }: { status: string }) {
@@ -40,6 +41,7 @@ export default function SupplierAvailabilityPage() {
 
   // Form state
   const [selectedTourId, setSelectedTourId] = useState<string>('')
+  const [selectedGuideId,setSelectedGuideId]=useState('')
   const [tourDate, setTourDate] = useState<string>('')
   const [status, setStatus] = useState<string>('YES')
   const [notes, setNotes] = useState<string>('')
@@ -72,7 +74,7 @@ export default function SupplierAvailabilityPage() {
     setIsSubmitting(true)
     setMessage(null)
 
-    if (!selectedTourId || !tourDate) {
+    if (!selectedTourId || !tourDate || !selectedGuideId) {
       setMessage({ type: 'error', text: 'Please select a tour and date.' })
       setIsSubmitting(false)
       return
@@ -80,6 +82,7 @@ export default function SupplierAvailabilityPage() {
 
     const formData = new FormData()
     formData.set('tour_id', selectedTourId)
+    formData.set('guide_user_id',selectedGuideId)
     formData.set('tour_date', tourDate)
     formData.set('status', status)
     formData.set('notes', notes)
@@ -142,7 +145,7 @@ export default function SupplierAvailabilityPage() {
 
               <div className="space-y-2">
                 <Label htmlFor="tour_id" className="text-slate-700">Tour</Label>
-                <Select value={selectedTourId} onValueChange={value => { if (value !== null) setSelectedTourId(value) }}>
+                <Select value={selectedTourId} onValueChange={value => { if (value !== null) setSelectedGuideId(''); setSelectedTourId(value ?? "") }}>
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="Select a tour">
                       {tours.find(t => t.id === selectedTourId)?.name || 'Select a tour'}
@@ -158,6 +161,7 @@ export default function SupplierAvailabilityPage() {
                 </Select>
               </div>
 
+              {selectedTourId && <GuidePicker tourId={selectedTourId} value={selectedGuideId} onChange={setSelectedGuideId} disabled={isSubmitting}/>}
               <div className="space-y-2">
                 <Label htmlFor="tour_date" className="text-slate-700">Tour Date</Label>
                 <Input 
@@ -246,7 +250,7 @@ export default function SupplierAvailabilityPage() {
                             </span>
                           </div>
                           <p className="text-sm text-slate-600 mt-0.5">
-                            {td.tours?.name || 'Unknown Tour'}
+                            {td.tours?.name || 'Unknown Tour'}<span className="block text-xs text-muted-foreground">{td.guide?.full_name}</span>
                           </p>
                         </div>
                       </div>
