@@ -989,7 +989,7 @@ export default function MinimumParticipantsClient({ canAction }: { canAction: bo
             <CardDescription>
               Upcoming tour dates that may not reach the minimum required participants.
             </CardDescription>
-            <p className="text-xs text-muted-foreground mt-1">Minimum required: 4 participants</p>
+            <p className="text-xs text-muted-foreground mt-1">The minimum is shown separately for each departure.</p>
           </CardHeader>
           <CardContent>
             {isLoading ? (
@@ -1023,7 +1023,7 @@ export default function MinimumParticipantsClient({ canAction }: { canAction: bo
                         title={(alert.tour_date as any)?.tour?.name || 'Unknown Tour'}
                       >
                         <span className="block truncate">
-                          {(alert.tour_date as any)?.tour?.name || 'Unknown Tour'}
+                          {(alert.tour_date as any)?.tour?.name || 'Unknown Tour'}<span className="block text-xs text-muted-foreground">{alert.tour_date?.guide_name}</span>
                         </span>
                       </TableCell>
                       <TableCell>
@@ -1154,7 +1154,7 @@ export default function MinimumParticipantsClient({ canAction }: { canAction: bo
                           title={(alert.tour_date as any)?.tour?.name || 'Unknown Tour'}
                         >
                           <span className="block truncate">
-                            {(alert.tour_date as any)?.tour?.name || 'Unknown Tour'}
+                            {(alert.tour_date as any)?.tour?.name || 'Unknown Tour'}<span className="block text-xs text-muted-foreground">{alert.tour_date?.guide_name}</span>
                           </span>
                         </TableCell>
                         <TableCell>

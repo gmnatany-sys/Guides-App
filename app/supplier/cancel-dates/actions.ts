@@ -4,17 +4,18 @@ import { getServiceRoleClient as createClient } from '@/lib/supabase-admin'
 import { requirePermission, safeSearch } from '@/lib/authorization'
 import { setDates } from '@/lib/booking-workflows'
 import { revalidatePath } from 'next/cache'
+import { toursForActor } from '@/lib/guide-access'
 
 export async function fetchTours() {
-  await requirePermission("supplier_confirmation_view")
+  const actor = await requirePermission("supplier_confirmation_view")
 
   const supabase = await createClient()
-  const { data, error } = await supabase.from('tours').select('*').order('name')
+  const { data, error } = await toursForActor(actor)
   return { tours: data || [], error: error?.message || null }
 }
 
-export async function fetchOpenTourDatesForMonth(tourId: string, year: number, month: number) {
-  await requirePermission("supplier_confirmation_view")
+export async function fetchOpenTourDatesForMonth(tourId: string, year: number, month: number, guideId?: string) {
+  const actor = await requirePermission("supplier_confirmation_view")
 
   const supabase = await createClient()
   
@@ -25,7 +26,9 @@ export async function fetchOpenTourDatesForMonth(tourId: string, year: number, m
   const { data, error } = await supabase
     .from('tour_dates')
     .select('*')
+    .match(actor.role === 'supplier' ? {guide_user_id:actor.id} : {})
     .eq('tour_id', tourId)
+    .match(guideId?{guide_user_id:guideId}:{})
     .gte('tour_date', startDate)
     .lte('tour_date', endDate)
   
@@ -37,13 +40,14 @@ export async function fetchOpenTourDatesForMonth(tourId: string, year: number, m
 }
 
 export async function fetchRecentlyCancelledDates(limit: number = 10) {
-  await requirePermission("supplier_confirmation_view")
+  const actor = await requirePermission("supplier_confirmation_view")
 
   const supabase = await createClient()
   
   const { data, error } = await supabase
     .from('tour_dates')
-    .select('*, tours(name)')
+    .select('*, tours(name), guide:app_users!tour_dates_guide_user_id_fkey(full_name)')
+      .match(actor.role === 'supplier' ? {guide_user_id:actor.id} : {})
     .eq('supplier_status', 'CANCELLED')
     .order('updated_at', { ascending: false })
     .limit(limit)
@@ -71,6 +75,6 @@ export async function fetchRecentlyCancelledDates(limit: number = 10) {
   return { cancelledDates: cancelledDatesWithCounts, error: null }
 }
 
-export async function cancelSelectedDates(tourId: string, dates: string[], cancellationNotes: string) {
-  return setDates(tourId, dates, false, 'CANCELLED', 'supplier_confirmation_action', cancellationNotes || 'Cancelled by supplier.')
+export async function cancelSelectedDates(tourId: string, dates: string[], cancellationNotes: string,guideId?:string) {
+  return setDates(tourId, dates, false, 'CANCELLED', 'supplier_confirmation_action', cancellationNotes || 'Cancelled by supplier.',guideId)
 }

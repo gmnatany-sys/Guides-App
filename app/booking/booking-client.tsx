@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/select'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { fetchBookingInitialData, fetchTourDatesForCalendar, submitBooking } from './actions'
+import { GuidePicker } from '@/components/guide-picker'
 import type { Tour } from '@/lib/types'
 
 export interface BookingClientProps {
@@ -23,6 +24,7 @@ export interface BookingClientProps {
 }
 
 interface CalendarDate {
+  guide_user_id: string
   id: string
   tour_id: string
   tour_date: string
@@ -47,6 +49,7 @@ export default function BookingClient({ currentUserId, currentUserRole, currentU
   // For admin/operation: empty string, user must pick from dropdown.
   const [selectedAgentId, setSelectedAgentId] = useState(isAgent ? currentUserId : '')
   const [selectedTourId, setSelectedTourId] = useState('')
+  const [selectedGuideId,setSelectedGuideId]=useState('')
   // Single source of truth for the chosen availability. We never store the
   // tour_date_id separately from the rest of the date info, so they cannot diverge.
   const [selectedDateInfo, setSelectedDateInfo] = useState<CalendarDate | null>(null)
@@ -88,7 +91,8 @@ export default function BookingClient({ currentUserId, currentUserRole, currentU
 
   // Load calendar dates when tour or month changes
   useEffect(() => {
-    if (!selectedTourId) {
+    if (!selectedTourId || !selectedGuideId) {
+      setIsLoadingCalendar(false)
       setCalendarDates([])
       setSelectedDateInfo(null)
       return
@@ -103,7 +107,7 @@ export default function BookingClient({ currentUserId, currentUserRole, currentU
         const { calendarDates: dates, error } = await fetchTourDatesForCalendar(
           selectedTourId,
           currentMonth.year,
-          currentMonth.month
+          currentMonth.month, selectedGuideId
         )
         if (ignore) return
         if (error) throw new Error(error)
@@ -128,14 +132,14 @@ export default function BookingClient({ currentUserId, currentUserRole, currentU
     }
     loadCalendarDates()
     return () => { ignore = true }
-  }, [selectedTourId, currentMonth])
+  }, [selectedTourId, selectedGuideId, currentMonth])
 
   // Reset selection when tour changes
   useEffect(() => {
     setSelectedDateInfo(null)
     setParticipants('')
     setParticipantsError(null)
-  }, [selectedTourId])
+  }, [selectedTourId,selectedGuideId])
 
   // Validate participants when changed
   useEffect(() => {
@@ -199,7 +203,7 @@ export default function BookingClient({ currentUserId, currentUserRole, currentU
     }
 
     // Guard: the selected availability must belong to the currently selected tour.
-    if (selectedDateInfo && selectedDateInfo.tour_id !== selectedTourId) {
+    if (selectedDateInfo && (selectedDateInfo.tour_id !== selectedTourId || selectedDateInfo.guide_user_id !== selectedGuideId)) {
       setMessage({ type: 'error', text: 'The selected date does not match the selected tour. Please re-select the date.' })
       setSelectedDateInfo(null)
       return
@@ -218,7 +222,7 @@ export default function BookingClient({ currentUserId, currentUserRole, currentU
           setMessage({ type: 'success', text: 'Booking submitted successfully.' })
           // Reset form state. Agents keep their own id; others reset to empty.
           setSelectedAgentId(isAgent ? currentUserId : '')
-          setSelectedTourId('')
+          setSelectedTourId('');setSelectedGuideId('')
           setSelectedDateInfo(null)
           setCalendarDates([])
           setParticipants('')
@@ -504,7 +508,7 @@ export default function BookingClient({ currentUserId, currentUserRole, currentU
                 <Select
                   name="tour_id"
                   value={selectedTourId}
-                  onValueChange={(value) => setSelectedTourId(value ?? '')}
+                  onValueChange={value=>{setSelectedDateInfo(null);setCalendarDates([]);setSelectedGuideId('');setSelectedTourId(value ?? '')}}
                   required
                 >
                   <SelectTrigger className="bg-white">
@@ -523,7 +527,8 @@ export default function BookingClient({ currentUserId, currentUserRole, currentU
               </div>
 
               {/* Available Date - Calendar */}
-              <div className="space-y-2">
+              {selectedTourId && <GuidePicker tourId={selectedTourId} value={selectedGuideId} onChange={id=>{setSelectedDateInfo(null);setCalendarDates([]);setSelectedGuideId(id)}} disabled={isPending}/>}
+          <div className="space-y-2">
                 <Label className="text-slate-700">
                   Available Date <span className="text-red-500">*</span>
                 </Label>

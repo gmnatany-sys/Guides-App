@@ -9,6 +9,10 @@ export interface Tour {
 }
 
 export interface TourDate {
+  guide_user_id: string
+  capacity: number
+  minimum_participants: number
+  guide?: {full_name:string} | null
   id: string
   tour_id: string
   tour_date: string

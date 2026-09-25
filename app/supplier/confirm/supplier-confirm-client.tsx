@@ -204,7 +204,7 @@ export default function SupplierConfirmClient({ initialPermissions }: Props) {
             )}
             <div>
               <span className="text-slate-500">Tour:</span>
-              <span className="ml-1 text-slate-900">{reservation.tours?.name || 'N/A'}</span>
+              <span className="ml-1 text-slate-900">{reservation.tours?.name || 'N/A'}</span><span className="block text-xs text-muted-foreground">Guide: {reservation.tour_dates?.guide?.full_name}</span>
             </div>
             <div>
               <span className="text-slate-500">Date:</span>

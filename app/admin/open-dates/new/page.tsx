@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { fetchToursAndDates, fetchTourDatesForMonth, bulkOpenDates, cancelSelectedDates } from '../actions'
+import { GuidePicker } from '@/components/guide-picker'
 import type { Tour, TourDate } from '@/lib/types'
 
 const DAYS_OF_WEEK = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -13,6 +14,7 @@ const DAYS_OF_WEEK = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 export default function AvailabilityCalendarPage() {
   const [tours, setTours] = useState<Tour[]>([])
   const [selectedTourId, setSelectedTourId] = useState<string>('')
+  const [selectedGuideId,setSelectedGuideId]=useState('')
   const [currentDate, setCurrentDate] = useState(new Date())
   const [tourDates, setTourDates] = useState<TourDate[]>([])
   const [selectedDates, setSelectedDates] = useState<Set<string>>(new Set())
@@ -56,7 +58,7 @@ export default function AvailabilityCalendarPage() {
     const request = ++dateRequest.current
     setDatesReady(false)
     setTourDates([])
-    if (!selectedTourId) {
+    if (!selectedTourId || !selectedGuideId) {
       setDatesLoading(false)
       return
     }
@@ -64,7 +66,7 @@ export default function AvailabilityCalendarPage() {
     const year = currentDate.getFullYear()
     const month = currentDate.getMonth() + 1
     try {
-      const result = await fetchTourDatesForMonth(selectedTourId, year, month)
+      const result = await fetchTourDatesForMonth(selectedTourId, year, month, selectedGuideId)
       if (request !== dateRequest.current) return
       if (result.error) throw new Error(result.error)
       setTourDates(result.tourDates as TourDate[])
@@ -76,7 +78,7 @@ export default function AvailabilityCalendarPage() {
     } finally {
       if (request === dateRequest.current) setDatesLoading(false)
     }
-  }, [selectedTourId, currentDate])
+  }, [selectedTourId, selectedGuideId, currentDate])
 
   useEffect(() => {
     loadTourDates()
@@ -190,7 +192,7 @@ export default function AvailabilityCalendarPage() {
     }
     
     try {
-      const result = await bulkOpenDates(selectedTourId, closedDatesToOpen)
+      const result = await bulkOpenDates(selectedTourId, closedDatesToOpen,selectedGuideId)
 
       if (result.success) {
         setMessage({ type: 'success', text: result.message })
@@ -225,7 +227,7 @@ export default function AvailabilityCalendarPage() {
     }
     
     try {
-      const result = await cancelSelectedDates(selectedTourId, openDatesToCancel)
+      const result = await cancelSelectedDates(selectedTourId, openDatesToCancel,selectedGuideId)
 
       if (result.success) {
         setMessage({ type: 'success', text: result.message })
@@ -265,7 +267,7 @@ export default function AvailabilityCalendarPage() {
         <CardContent>
           <Select value={selectedTourId} disabled={processing} onValueChange={(value) => {
             invalidateDates()
-            setSelectedTourId(value ?? '')
+            setSelectedGuideId(''); setSelectedTourId(value ?? '')
             setSelectedDates(new Set())
             setMessage(null)
           }}>
@@ -286,6 +288,7 @@ export default function AvailabilityCalendarPage() {
       </Card>
 
       {/* Calendar */}
+      {selectedTourId && <GuidePicker tourId={selectedTourId} value={selectedGuideId} disabled={processing} onChange={id=>{invalidateDates();setSelectedDates(new Set());setSelectedGuideId(id)}}/>}
       <Card>
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
