@@ -29,18 +29,22 @@ jobs:
             supabase migration new booking_lockdown
             cp database/lockdown-remediation.sql supabase/migrations/*_booking_lockdown.sql
           fi
+          if ! compgen -G 'supabase/migrations/*_multi_guide.sql' > /dev/null; then
+            supabase migration new multi_guide
+            cp database/multi-guide.sql supabase/migrations/*_multi_guide.sql
+          fi
           python3 - <<'PY'
           import hashlib, json, pathlib
           files = sorted(pathlib.Path('supabase/migrations').glob('*.sql'))
           manifest = []
-          for name, source in [('booking_prepare', 'prepare-remediation.sql'), ('booking_lockdown', 'lockdown-remediation.sql')]:
+          for name, source in [('booking_prepare', 'prepare-remediation.sql'), ('booking_lockdown', 'lockdown-remediation.sql'), ('multi_guide', 'multi-guide.sql')]:
               matches = [p for p in files if p.name.endswith('_' + name + '.sql')]
               assert len(matches) == 1, matches
               path = matches[0]
               data = path.read_bytes()
               assert data == pathlib.Path('database', source).read_bytes()
               manifest.append({'file': str(path), 'sha256': hashlib.sha256(data).hexdigest()})
-          assert len({entry['file'].split('/')[-1].split('_')[0] for entry in manifest}) == 2
+          assert len({entry['file'].split('/')[-1].split('_')[0] for entry in manifest}) == 3
           result = json.dumps(manifest, indent=2)
           pathlib.Path('migration-manifest.json').write_text(result + '\n')
           print(result)
@@ -51,9 +55,13 @@ jobs:
           path: |
             supabase/migrations/*_booking_prepare.sql
             supabase/migrations/*_booking_lockdown.sql
+            supabase/migrations/*_multi_guide.sql
             migration-manifest.json
           retention-days: 30
   concurrency:
+    strategy:
+      matrix:
+        multi_guide: ["0", "1"]
     runs-on: ubuntu-24.04
     services:
       postgres:
@@ -73,6 +81,28 @@ jobs:
       - uses: actions/checkout@v4
       - name: Test competing bookings, cancellations, confirmations and email claims
         env:
+          MULTI_GUIDE_TEST: ${{ matrix.multi_guide }}
           TEST_DATABASE_URL: postgresql://postgres:local-test-only@127.0.0.1:5432/guides_remediation_test
         run: python3 tests/postgres_concurrency.py
 
+  application-checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: synthetic-build-only
+          APP_SUPABASE_URL: https://example.supabase.co
+          APP_SUPABASE_SERVICE_ROLE_KEY: synthetic-build-only
+          NEXT_PUBLIC_JWT_8: synthetic-build-only
