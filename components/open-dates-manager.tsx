@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/table'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { GuidePicker } from '@/components/guide-picker'
 import type { Tour, TourDate } from '@/lib/types'
 
 function getSupplierStatusVariant(status: string) {
@@ -48,6 +49,7 @@ export function OpenDatesManager() {
 
   // Form state
   const [selectedTourId, setSelectedTourId] = useState<string>('')
+  const [selectedGuideId,setSelectedGuideId]=useState('')
   const [tourDate, setTourDate] = useState<string>('')
   const [isOpen, setIsOpen] = useState(true)
   const [supplierStatus, setSupplierStatus] = useState<string>('YES')
@@ -81,7 +83,7 @@ export function OpenDatesManager() {
     setIsSubmitting(true)
     setMessage(null)
 
-    if (!selectedTourId || !tourDate) {
+    if (!selectedTourId || !tourDate || !selectedGuideId) {
       setMessage({ type: 'error', text: 'Please select a tour and date.' })
       setIsSubmitting(false)
       return
@@ -89,6 +91,7 @@ export function OpenDatesManager() {
 
     const formData = new FormData()
     formData.set('tour_id', selectedTourId)
+    formData.set('guide_user_id',selectedGuideId)
     formData.set('tour_date', tourDate)
     formData.set('is_open', isOpen ? 'true' : 'false')
     formData.set('supplier_status', supplierStatus)
@@ -149,7 +152,7 @@ export function OpenDatesManager() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="tour_id">Tour</Label>
-                <Select value={selectedTourId} onValueChange={value => { if (value !== null) setSelectedTourId(value) }}>
+                <Select value={selectedTourId} onValueChange={value => { if (value !== null) setSelectedGuideId(''); setSelectedTourId(value ?? "") }}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select a tour">
                       {tours.find(t => t.id === selectedTourId)?.name || 'Select a tour'}
@@ -165,6 +168,7 @@ export function OpenDatesManager() {
                 </Select>
               </div>
 
+              {selectedTourId && <GuidePicker tourId={selectedTourId} value={selectedGuideId} onChange={setSelectedGuideId} disabled={isSubmitting}/>}
               <div className="space-y-2">
                 <Label htmlFor="tour_date">Date</Label>
                 <Input 
@@ -245,7 +249,7 @@ export function OpenDatesManager() {
                 {tourDates.map((td) => (
                   <TableRow key={td.id}>
                     <TableCell className="font-medium">
-                      {td.tours?.name || 'Unknown Tour'}
+                      {td.tours?.name || 'Unknown Tour'}<span className="block text-xs text-muted-foreground">{td.guide?.full_name}</span>
                     </TableCell>
                     <TableCell>
                       {new Date(td.tour_date).toLocaleDateString()}
