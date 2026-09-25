@@ -6,14 +6,15 @@ import { revalidatePath } from 'next/cache'
 import { transitionReservation } from '@/lib/booking-workflows'
 
 export async function fetchReservationsByStatus(status: string, search?: string, offset = 0) {
-  await requirePermission("supplier_confirmation_view")
+  const actor = await requirePermission("supplier_confirmation_view")
 
   const t0 = Date.now()
   const supabase = await createClient()
 
   let query = supabase
     .from('reservations')
-    .select('*, tours(name), tour_dates(tour_date)')
+    .select('*, tours(name), tour_dates!inner(tour_date, guide_user_id, guide:app_users!tour_dates_guide_user_id_fkey(full_name))')
+    .match(actor.role === 'supplier' ? {'tour_dates.guide_user_id':actor.id} : {})
     .eq('status', status)
     .order('created_at', { ascending: false })
     .order('id', { ascending: false })
@@ -35,43 +36,14 @@ export async function fetchReservationsByStatus(status: string, search?: string,
 }
 
 export async function fetchAllReservationCounts() {
-  await requirePermission("supplier_confirmation_view")
+  const actor = await requirePermission("supplier_confirmation_view")
 
   const t0 = Date.now()
   const supabase = await createClient()
 
-  // Single RPC call replaces 4 parallel COUNT queries — one round trip, one
-  // connection, same result shape. Falls back to 4 parallel queries if the RPC
-  // fails (e.g. function not yet deployed to this environment).
-  const { data: rpcData, error: rpcError } = await supabase.rpc('get_reservation_status_counts')
-  console.log(`[v0] pageData route=/supplier/confirm step=fetchAllReservationCounts duration=${Date.now() - t0}ms`)
-
-  if (!rpcError && rpcData) {
-    const counts = { waiting: 0, confirmed: 0, notConfirmed: 0, cancelled: 0 }
-    for (const row of rpcData as { status: string; count: number }[]) {
-      if (row.status === 'WAITING FOR CONFIRMATION') counts.waiting = Number(row.count)
-      else if (row.status === 'CONFIRMED') counts.confirmed = Number(row.count)
-      else if (row.status === 'NOT CONFIRMED') counts.notConfirmed = Number(row.count)
-      else if (row.status === 'CANCELLED') counts.cancelled = Number(row.count)
-    }
-    return counts
-  }
-
-  // Fallback: RPC unavailable — use original 4 parallel queries.
-  console.log(`[v0] fetchAllReservationCounts RPC failed, falling back: ${rpcError?.message}`)
-  const [waiting, confirmed, notConfirmed, cancelled] = await Promise.all([
-    supabase.from('reservations').select('id', { count: 'exact', head: true }).eq('status', 'WAITING FOR CONFIRMATION'),
-    supabase.from('reservations').select('id', { count: 'exact', head: true }).eq('status', 'CONFIRMED'),
-    supabase.from('reservations').select('id', { count: 'exact', head: true }).eq('status', 'NOT CONFIRMED'),
-    supabase.from('reservations').select('id', { count: 'exact', head: true }).eq('status', 'CANCELLED'),
-  ])
-  if ([waiting,confirmed,notConfirmed,cancelled].some(result => result.error)) throw new Error('Reservation counts could not be loaded.')
-  return {
-    waiting: waiting.count || 0,
-    confirmed: confirmed.count || 0,
-    notConfirmed: notConfirmed.count || 0,
-    cancelled: cancelled.count || 0,
-  }
+  const { data, error } = await supabase.rpc('booking_supplier_counts', { p_actor: actor.id })
+  if (error || !data) throw new Error('Reservation counts could not be loaded.')
+  return data as {waiting:number;confirmed:number;notConfirmed:number;cancelled:number}
 }
 
 
