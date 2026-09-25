@@ -24,7 +24,7 @@ export async function fetchReservations(filters: ReservationFilters = {}) {
   
   let query = supabase
     .from('reservations')
-    .select('*, tours(name), tour_dates(tour_date)')
+    .select('*, tours(name), tour_dates(tour_date,guide:app_users!tour_dates_guide_user_id_fkey(full_name))')
     .order('created_at', { ascending: false })
     // Default to the latest 100 records; all filters/search are applied server-side.
     .order('id', { ascending: false })

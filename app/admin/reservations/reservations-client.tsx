@@ -394,7 +394,7 @@ export default function ReservationsClient({ initialPermissions }: Props) {
                     {/* Tour — truncated with full name in tooltip */}
                     <TableCell className="max-w-[180px]">
                       <span className="text-sm block truncate" title={res.tours?.name ?? ''}>
-                        {res.tours?.name || '-'}
+                        {res.tours?.name || '-'}<span className="block text-xs text-muted-foreground">{res.tour_dates?.guide?.full_name}</span>
                       </span>
                     </TableCell>
 
@@ -477,6 +477,7 @@ export default function ReservationsClient({ initialPermissions }: Props) {
               <DetailRow label="Created" value={fmtDateLong(selectedRes.created_at)} />
               <DetailRow label="Tour Date" value={fmtDateLong(selectedRes.tour_dates?.tour_date)} />
               <DetailRow label="Tour" value={selectedRes.tours?.name} />
+              <DetailRow label="Guide" value={selectedRes.tour_dates?.guide?.full_name} />
               <DetailRow label="Passengers" value={selectedRes.participants} />
               <DetailRow label="Lead Passenger" value={selectedRes.lead_passenger_name} />
               <DetailRow label="WhatsApp" value={selectedRes.whatsapp_number} />
