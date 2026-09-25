@@ -15,7 +15,7 @@ export function renderEmail(subject: string, reservation?: Record<string, any>, 
   const rows: [string, unknown][] = r ? [
     ['Voucher Number',r.voucher_number], ['Docket Number',r.reservation_number],
     ['Lead Passenger',r.lead_passenger_name], ['WhatsApp',r.whatsapp_number],
-    ['Tour',r.tours?.name], ['Tour Date',r.tour_dates?.tour_date], ['Participants',r.participants],
+    ['Tour',r.tours?.name], ['Guide',r.guide?.name], ['Tour Date',r.tour_dates?.tour_date], ['Participants',r.participants],
     ['Status',r.status], ['Confirmation Number',r.confirmation_number],
     ['Agent Name',r.agent_name], ['Agent Email',r.agent_email], ['Notes',r.internal_notes],
   ] : []

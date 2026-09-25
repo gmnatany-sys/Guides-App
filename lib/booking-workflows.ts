@@ -39,9 +39,10 @@ export async function transitionReservation(id: string, status: string, permissi
     warning: delivery.failed || delivery.pending ? 'Booking saved. Email delivery is pending; check Email Logs.' : undefined }
 }
 
-export async function setDates(tourId: string, dates: string[], open: boolean, status: string, permission: string, note?: string) {
+export async function setDates(tourId: string, dates: string[], open: boolean, status: string, permission: string, note?: string, guideId?: string) {
   const actor = await requirePermission(permission)
-  const { data, error } = await getServiceRoleClient().rpc('booking_set_dates', {
+  const { data, error } = await getServiceRoleClient().rpc(guideId ? 'booking_set_guide_dates' : 'booking_set_dates', {
+    ...(guideId ? { p_guide: guideId } : {}),
     p_actor: actor.id, p_tour: tourId, p_dates: dates, p_open: open, p_status: status, p_note: note ?? null,
   })
   if (error || !data) return { success: false, error: error?.message ?? 'Dates were not updated.', message: error?.message,

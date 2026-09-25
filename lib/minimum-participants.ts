@@ -3,7 +3,6 @@ import 'server-only'
 import { getServiceRoleClient as createClient } from '@/lib/supabase-admin'
 import { requirePermission } from '@/lib/authorization'
 import { escapeHtml } from '@/lib/html'
-import { createHash } from 'node:crypto'
 import { refreshBookingPages } from '@/lib/booking-workflows'
 import { after } from 'next/server'
 import { processEmailOutbox } from '@/lib/email-log'
@@ -95,13 +94,11 @@ This is an automated message from Japan Tours.`
   return { html, text }
 }
 
-// Email configuration
-const EMAIL_CONFIG = {
-  from: 'info@yapantours.com',
-  operations: 'gmnatany@yapantours.com',
-  supplier: 'itai@mitiya.co',
-  cc_default: 'reservation@yapantours.com,itai@mitiya.co',
-  cc_supplier: 'gmnatany@yapantours.com,reservation@yapantours.com'
+async function emailConfigForDate(tourDateId: string) {
+  const {data,error}=await createClient().rpc('booking_guide_email',{p_date:tourDateId})
+  if(error || !data) throw new Error('Unable to verify the guide notification address.')
+  return {from:'info@yapantours.com',operations:'gmnatany@yapantours.com',supplier:data as string,
+    cc_default:`reservation@yapantours.com,${data}`,cc_supplier:'gmnatany@yapantours.com,reservation@yapantours.com'}
 }
 
 export interface MinimumParticipantAlert {
@@ -122,6 +119,7 @@ export interface MinimumParticipantAlert {
   created_at: string
   updated_at: string
   tour_date?: {
+    guide_name?: string
     id: string
     tour_date: string
     tour?: {
@@ -233,6 +231,9 @@ async function sendCancellationEmailForReservation(
     return detail
   }
 
+  const {data:departure,error:departureError}=await supabase.from('reservations').select('tour_date_id').eq('id',reservation.id).single()
+  if(departureError || !departure) {detail.error='Unable to verify departure.';return detail}
+  const EMAIL_CONFIG=await emailConfigForDate(departure.tour_date_id)
   // CC list: operations + supplier + agent (if present).
   const ccList = [EMAIL_CONFIG.operations, EMAIL_CONFIG.supplier]
   if (reservation.agent_email) {
@@ -286,47 +287,6 @@ async function sendCancellationEmailForReservation(
 
   detail.error = lastError
   return detail
-}
-
-// Helper to check for duplicate email logs using email_type + to_email + subject
-async function emailLogExists(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  emailType: string,
-  toEmail: string,
-  subject: string
-): Promise<boolean> {
-  const { data } = await supabase
-    .from('email_logs')
-    .select('id')
-    .eq('email_type', emailType)
-    .eq('to_email', toEmail)
-    .eq('subject', subject)
-    .in('status', ['PENDING', 'READY_TO_SEND', 'SENT'])
-    .limit(1)
-
-  return !!(data && data.length > 0)
-}
-
-// Helper to create a PENDING email log
-async function createPendingEmailLog(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  params: {
-    reservationId?: string | null
-    emailType: string
-    fromEmail: string
-    toEmail: string
-    cc?: string
-    subject: string
-  }
-): Promise<{ success: boolean; skipped?: boolean; error?: string }> {
-  const existing = await supabase.from('email_logs').select('id').eq('email_type', params.emailType).eq('to_email', params.toEmail).eq('subject', params.subject).limit(1)
-  if (existing.error) return { success: false, skipped: false, error: existing.error.message }
-  if (existing.data?.length) return { success: true, skipped: true }
-  const key = 'alert/' + createHash('sha256').update(JSON.stringify([params.emailType,params.toEmail,params.subject])).digest('hex')
-  const { error } = await supabase.from('email_logs').upsert({reservation_id:params.reservationId ?? null,
-    email_type:params.emailType,from_email:params.fromEmail,to_email:params.toEmail,cc:params.cc ?? null,
-    subject:params.subject,status:'PENDING',event_key:key,text_body:params.subject + '\nReview the current Minimum Participants page before taking action.'}, {onConflict:'event_key',ignoreDuplicates:true})
-  return { success: !error, skipped: false, error: error?.message }
 }
 
 // Active participants = SUM of reservations.participants for the same tour_date_id
@@ -533,7 +493,7 @@ function computeAlertStage(
 export async function fetchMinimumParticipantAlerts(filters?: {
   status?: string
   alert_stage?: string
-}) {
+}, guideId?: string) {
   const t0 = Date.now()
   const supabase = await createClient()
 
@@ -555,7 +515,8 @@ export async function fetchMinimumParticipantAlerts(filters?: {
     const tDates = Date.now()
     const { data: windowDates, error: tdError } = await supabase
       .from('tour_dates')
-      .select('id, tour_date, is_open, supplier_status, tour:tours(id, name)')
+      .select('id, tour_date, is_open, supplier_status, minimum_participants, guide_user_id, guide:app_users!tour_dates_guide_user_id_fkey(full_name), tour:tours(id, name)')
+      .match(guideId ? {guide_user_id:guideId} : {})
       .gte('tour_date', startStr)
       .lte('tour_date', endStr)
       .order('tour_date', { ascending: true })
@@ -614,6 +575,7 @@ export async function fetchMinimumParticipantAlerts(filters?: {
       const tourInfo = {
         id: td.id,
         tour_date: td.tour_date,
+        guide_name: (Array.isArray(td.guide)?td.guide[0]:td.guide)?.full_name,
         is_open: td.is_open,
         supplier_status: td.supplier_status,
         tour: tourRel ? { id: (tourRel as any).id, name: (tourRel as any).name } : undefined,
@@ -665,7 +627,7 @@ export async function fetchMinimumParticipantAlerts(filters?: {
       const isLiveIssue =
         isOpenDate &&
         active >= 1 &&
-        active < MIN_PARTICIPANTS_REQUIRED &&
+        active < td.minimum_participants &&
         days >= 0 &&
         stage !== null &&
         !decided
@@ -679,8 +641,8 @@ export async function fetchMinimumParticipantAlerts(filters?: {
           reason = `supplier decision already recorded (${decidedRow.status})`
         } else if (active < 1) {
           reason = '0 active participants'
-        } else if (active >= MIN_PARTICIPANTS_REQUIRED) {
-          reason = `active_participants >= ${MIN_PARTICIPANTS_REQUIRED}`
+        } else if (active >= td.minimum_participants) {
+          reason = `active_participants >= ${td.minimum_participants}`
         } else if (days < 0) {
           reason = 'tour date is in the past'
         } else if (stage === null) {
@@ -710,7 +672,7 @@ export async function fetchMinimumParticipantAlerts(filters?: {
           tour_date_id: td.id,
           alert_stage: stage!,
           active_participants: active,
-          minimum_required: MIN_PARTICIPANTS_REQUIRED,
+          minimum_required: td.minimum_participants,
           days_before_tour: days,
           status: 'NOT CREATED',
           supplier_decision: null,
@@ -767,7 +729,7 @@ export async function fetchMinimumParticipantAlerts(filters?: {
 // Loaded ONLY when the section is expanded (rule 15: no history scan on page load).
 // Returns decided / resolved rows (CANCELLED, KEPT, RESOLVED) plus past OPEN rows
 // that are no longer operational. Bounded to a recent window for performance.
-export async function fetchMinimumParticipantHistory() {
+export async function fetchMinimumParticipantHistory(guideId?: string) {
   const supabase = await createClient()
 
   try {
@@ -783,7 +745,8 @@ export async function fetchMinimumParticipantHistory() {
 
     const { data: dates, error: tdError } = await supabase
       .from('tour_dates')
-      .select('id, tour_date, is_open, supplier_status, tour:tours(id, name)')
+      .select('id, tour_date, is_open, supplier_status, minimum_participants, guide_user_id, guide:app_users!tour_dates_guide_user_id_fkey(full_name), tour:tours(id, name)')
+      .match(guideId ? {guide_user_id:guideId} : {})
       .gte('tour_date', startStr)
       .lte('tour_date', endStr)
       .order('tour_date', { ascending: false })
@@ -801,6 +764,7 @@ export async function fetchMinimumParticipantHistory() {
       tourInfoById.set(d.id, {
         id: d.id,
         tour_date: d.tour_date,
+        guide_name: (Array.isArray(d.guide)?d.guide[0]:d.guide)?.full_name,
         tour: tourRel ? { id: (tourRel as any).id, name: (tourRel as any).name } : undefined,
       })
     }
@@ -846,7 +810,7 @@ export interface MinimumParticipantCandidate {
 // Item 9: "Debug Visible Candidate Dates". Lists every tour_date in the next 7 days
 // (today .. today+7) with the exact data used for the inclusion decision, including
 // 0/4 dates (shown with an exclusion reason). Uses the SAME rules as the live fetch.
-export async function fetchMinimumParticipantCandidates(): Promise<{
+export async function fetchMinimumParticipantCandidates(guideId?: string): Promise<{
   candidates: MinimumParticipantCandidate[]
   error: string | null
 }> {
@@ -861,7 +825,8 @@ export async function fetchMinimumParticipantCandidates(): Promise<{
 
     const { data: dates, error } = await supabase
       .from('tour_dates')
-      .select('id, tour_date, is_open, supplier_status, tour:tours(id, name)')
+      .select('id, tour_date, is_open, supplier_status, minimum_participants, guide_user_id, guide:app_users!tour_dates_guide_user_id_fkey(full_name), tour:tours(id, name)')
+      .match(guideId ? {guide_user_id:guideId} : {})
       .gte('tour_date', startStr)
       .lte('tour_date', endStr)
       .order('tour_date', { ascending: true })
@@ -888,8 +853,8 @@ export async function fetchMinimumParticipantCandidates(): Promise<{
         reason = 'supplier_status = CANCELLED'
       } else if (active < 1) {
         reason = '0 active participants'
-      } else if (active >= MIN_PARTICIPANTS_REQUIRED) {
-        reason = `active_participants >= ${MIN_PARTICIPANTS_REQUIRED}`
+      } else if (active >= td.minimum_participants) {
+        reason = `active_participants >= ${td.minimum_participants}`
       } else if (days < 0) {
         reason = 'tour date is in the past'
       } else if (stage === null) {
@@ -901,6 +866,7 @@ export async function fetchMinimumParticipantCandidates(): Promise<{
       return {
         tour_date_id: td.id,
         tour_date: td.tour_date,
+        guide_name: (Array.isArray(td.guide)?td.guide[0]:td.guide)?.full_name,
         tour_name: (tourRel as any)?.name || 'Unknown Tour',
         is_open: td.is_open === true,
         supplier_status: td.supplier_status ?? null,
@@ -1320,322 +1286,18 @@ export interface RepairResult {
 }
 
 export async function repairMissingEmailLogs(): Promise<RepairResult> {
-  const supabase = await createClient()
-
-  const result: RepairResult = {
-    success: true,
-    emailLogsCreated: 0,
-    emailLogsSkipped: 0,
-    details: []
+  const supabase=createClient()
+  const result:RepairResult={success:true,emailLogsCreated:0,emailLogsSkipped:0,details:[]}
+  const {data,error}=await supabase.from('minimum_participant_alerts').select('tour_date_id').eq('status','OPEN')
+  if(error)return {...result,success:false,error:error.message}
+  for(const id of new Set((data ?? []).map(a=>a.tour_date_id))) {
+    const {data:sync,error:syncError}=await supabase.rpc('booking_sync_minimum',{p_id:id})
+    if(syncError || !sync) {result.success=false;result.error='Some alerts could not be synchronized.';continue}
+    result.emailLogsCreated+=sync.emailLogsCreated ?? 0
+    result.emailLogsSkipped+=sync.emailLogsSkipped ?? 0
   }
-
-  // Get all OPEN alerts
-  const { data: openAlerts, error } = await supabase
-    .from('minimum_participant_alerts')
-    .select(`
-      id,
-      tour_date_id,
-      alert_stage,
-      active_participants,
-      minimum_required,
-      tour_date:tour_dates(
-        id,
-        tour_date,
-        tour:tours(id, name)
-      )
-    `)
-    .eq('status', 'OPEN')
-
-  if (error) {
-    return { ...result, success: false, error: error.message }
-  }
-
-  for (const alert of openAlerts || []) {
-    const tourName = (alert.tour_date as any)?.tour?.name || 'Unknown Tour'
-    const tourDateStr = (alert.tour_date as any)?.tour_date
-    const alertStage = alert.alert_stage
-
-    if (alertStage === 'LOW_PARTICIPANTS_7_DAYS' || alertStage === 'LOW_PARTICIPANTS_5_DAYS') {
-      const mainEmailResult = await createPendingEmailLog(supabase, {
-        emailType: alertStage,
-        fromEmail: EMAIL_CONFIG.from,
-        toEmail: EMAIL_CONFIG.operations,
-        cc: EMAIL_CONFIG.cc_default,
-        subject: `Low Participants Alert - ${tourName} - ${tourDateStr}`
-      })
-
-      if (mainEmailResult.skipped) {
-        result.emailLogsSkipped++
-        result.details.push(`Skipped (exists): ${tourName} on ${tourDateStr} - operations email`)
-      } else if (mainEmailResult.success) {
-        result.emailLogsCreated++
-        result.details.push(`Created: ${tourName} on ${tourDateStr} - operations email`)
-      }
-
-      // Get agent emails for active reservations
-      const { data: activeReservations } = await supabase
-        .from('reservations')
-        .select('id, agent_email')
-        .eq('tour_date_id', alert.tour_date_id)
-        .in('status', ['WAITING FOR CONFIRMATION', 'CONFIRMED'])
-        .not('agent_email', 'is', null)
-
-      const agentEmails = new Set<string>()
-      for (const reservation of activeReservations || []) {
-        if (reservation.agent_email && !agentEmails.has(reservation.agent_email)) {
-          agentEmails.add(reservation.agent_email)
-
-          const agentEmailResult = await createPendingEmailLog(supabase, {
-            reservationId: reservation.id,
-            emailType: alertStage,
-            fromEmail: EMAIL_CONFIG.from,
-            toEmail: reservation.agent_email,
-            cc: EMAIL_CONFIG.cc_supplier,
-            subject: `Low Participants Alert - ${tourName} - ${tourDateStr}`
-          })
-
-          if (agentEmailResult.skipped) {
-            result.emailLogsSkipped++
-            result.details.push(`Skipped (exists): ${tourName} on ${tourDateStr} - agent ${reservation.agent_email}`)
-          } else if (agentEmailResult.success) {
-            result.emailLogsCreated++
-            result.details.push(`Created: ${tourName} on ${tourDateStr} - agent ${reservation.agent_email}`)
-          }
-        }
-      }
-
-    } else if (alertStage === 'SUPPLIER_DECISION_REQUIRED_3_DAYS') {
-      const supplierEmailResult = await createPendingEmailLog(supabase, {
-        emailType: alertStage,
-        fromEmail: EMAIL_CONFIG.from,
-        toEmail: EMAIL_CONFIG.supplier,
-        cc: EMAIL_CONFIG.cc_supplier,
-        subject: `Supplier Decision Required - Minimum Participants - ${tourName} - ${tourDateStr}`
-      })
-
-      if (supplierEmailResult.skipped) {
-        result.emailLogsSkipped++
-        result.details.push(`Skipped (exists): ${tourName} on ${tourDateStr} - supplier email`)
-      } else if (supplierEmailResult.success) {
-        result.emailLogsCreated++
-        result.details.push(`Created: ${tourName} on ${tourDateStr} - supplier email`)
-      }
-    }
-  }
-
-  revalidatePath('/admin/minimum-participants')
-  revalidatePath('/admin/email-logs')
+  revalidatePath('/admin/minimum-participants');revalidatePath('/admin/email-logs')
   return result
-}
-
-// ---------------------------------------------------------------------------
-// Live, automatic minimum-participants sync
-//
-// These helpers keep minimum_participant_alerts in sync with the CURRENT state
-// of reservations and tour_dates for a SINGLE tour date. They are invoked
-// automatically after any booking/reservation/availability change so the
-// admin page always reflects live data without a manual check. The work is
-// always scoped to one tour_date_id — it never scans all reservations.
-// ---------------------------------------------------------------------------
-
-const MIN_PARTICIPANTS_REQUIRED = 4
-
-// Create the PENDING email logs that correspond to a newly-created alert stage.
-// Shared so the manual check and the automatic sync stay consistent.
-async function createStageEmailLogs(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  params: { tourDateId: string; alertStage: string; tourName: string; tourDateStr: string }
-): Promise<{ created: number; skipped: number; details: string[] }> {
-  const { tourDateId, alertStage, tourName, tourDateStr } = params
-  const out = { created: 0, skipped: 0, details: [] as string[] }
-
-  if (alertStage === 'LOW_PARTICIPANTS_7_DAYS' || alertStage === 'LOW_PARTICIPANTS_5_DAYS') {
-    const mainEmailResult = await createPendingEmailLog(supabase, {
-      emailType: alertStage,
-      fromEmail: EMAIL_CONFIG.from,
-      toEmail: EMAIL_CONFIG.operations,
-      cc: EMAIL_CONFIG.cc_default,
-      subject: `Low Participants Alert - ${tourName} - ${tourDateStr}`
-    })
-    if (mainEmailResult.skipped) out.skipped++
-    else if (mainEmailResult.success) out.created++
-
-    // Notify each unique agent that has an active reservation on this date.
-    const { data: activeReservations } = await supabase
-      .from('reservations')
-      .select('id, agent_email')
-      .eq('tour_date_id', tourDateId)
-      .in('status', ['WAITING FOR CONFIRMATION', 'CONFIRMED'])
-      .not('agent_email', 'is', null)
-
-    const agentEmails = new Set<string>()
-    for (const reservation of activeReservations || []) {
-      if (reservation.agent_email && !agentEmails.has(reservation.agent_email)) {
-        agentEmails.add(reservation.agent_email)
-        const agentEmailResult = await createPendingEmailLog(supabase, {
-          reservationId: reservation.id,
-          emailType: alertStage,
-          fromEmail: EMAIL_CONFIG.from,
-          toEmail: reservation.agent_email,
-          cc: EMAIL_CONFIG.cc_supplier,
-          subject: `Low Participants Alert - ${tourName} - ${tourDateStr}`
-        })
-        if (agentEmailResult.skipped) out.skipped++
-        else if (agentEmailResult.success) out.created++
-      }
-    }
-  } else if (alertStage === 'SUPPLIER_DECISION_REQUIRED_3_DAYS') {
-    const supplierEmailResult = await createPendingEmailLog(supabase, {
-      emailType: alertStage,
-      fromEmail: EMAIL_CONFIG.from,
-      toEmail: EMAIL_CONFIG.supplier,
-      cc: EMAIL_CONFIG.cc_supplier,
-      subject: `Supplier Decision Required - Minimum Participants - ${tourName} - ${tourDateStr}`
-    })
-    if (supplierEmailResult.skipped) out.skipped++
-    else if (supplierEmailResult.success) out.created++
-  }
-
-  return out
-}
-
-// Resolve every OPEN alert for a tour date (used when 4+ participants reached,
-// the date was closed/cancelled, or the date is in the past).
-async function resolveOpenAlerts(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  tourDateId: string,
-  participants: number,
-  days: number,
-  nowIso: string
-): Promise<number> {
-  const { data: openToResolve } = await supabase
-    .from('minimum_participant_alerts')
-    .select('id')
-    .eq('tour_date_id', tourDateId)
-    .eq('status', 'OPEN')
-
-  if (openToResolve && openToResolve.length > 0) {
-    await supabase
-      .from('minimum_participant_alerts')
-      .update({
-        status: 'RESOLVED',
-        active_participants: participants,
-        days_before_tour: days,
-        updated_at: nowIso
-      })
-      .eq('tour_date_id', tourDateId)
-      .eq('status', 'OPEN')
-    return openToResolve.length
-  }
-  return 0
-}
-
-// Maintain exactly ONE OPEN alert per tour date at the CURRENT stage with live
-// values. Collapses stale duplicate OPEN rows and reopens a prior alert if one
-// exists. Returns whether this represents a NEW stage (so emails are created).
-async function upsertOpenAlertForStage(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  params: {
-    tourDateId: string
-    alertStage: string
-    participants: number
-    days: number
-    nowIso: string
-  }
-): Promise<{ isNewStage: boolean }> {
-  const { tourDateId, alertStage, participants, days, nowIso } = params
-
-  const { data: openAlerts } = await supabase
-    .from('minimum_participant_alerts')
-    .select('id, alert_stage')
-    .eq('tour_date_id', tourDateId)
-    .eq('status', 'OPEN')
-    .order('created_at', { ascending: false })
-
-  if (openAlerts && openAlerts.length > 0) {
-    const [current, ...duplicates] = openAlerts
-    const previousStage = current.alert_stage
-
-    // Resolve any extra OPEN rows for this tour date up front.
-    if (duplicates.length > 0) {
-      await supabase
-        .from('minimum_participant_alerts')
-        .update({ status: 'RESOLVED', updated_at: nowIso })
-        .in('id', duplicates.map((d) => d.id))
-    }
-
-    if (previousStage === alertStage) {
-      // Same stage: just refresh live values on the current row.
-      await supabase
-        .from('minimum_participant_alerts')
-        .update({
-          active_participants: participants,
-          days_before_tour: days,
-          updated_at: nowIso,
-        })
-        .eq('id', current.id)
-      return { isNewStage: false }
-    }
-
-    // Stage changed. A row may already exist at the NEW stage (e.g. a prior RESOLVED
-    // row), which would make changing current.alert_stage violate the unique key.
-    // Detect it and reuse it instead of colliding.
-    const { data: existingAtNewStage } = await supabase
-      .from('minimum_participant_alerts')
-      .select('id')
-      .eq('tour_date_id', tourDateId)
-      .eq('alert_stage', alertStage)
-      .maybeSingle()
-
-    if (existingAtNewStage && existingAtNewStage.id !== current.id) {
-      // Promote the existing new-stage row to OPEN and resolve the old-stage row.
-      await supabase
-        .from('minimum_participant_alerts')
-        .update({
-          status: 'OPEN',
-          active_participants: participants,
-          days_before_tour: days,
-          updated_at: nowIso,
-        })
-        .eq('id', existingAtNewStage.id)
-      await supabase
-        .from('minimum_participant_alerts')
-        .update({ status: 'RESOLVED', updated_at: nowIso })
-        .eq('id', current.id)
-    } else {
-      // Safe to move the current row to the new stage.
-      await supabase
-        .from('minimum_participant_alerts')
-        .update({
-          alert_stage: alertStage,
-          active_participants: participants,
-          days_before_tour: days,
-          updated_at: nowIso,
-        })
-        .eq('id', current.id)
-    }
-
-    return { isNewStage: true }
-  }
-
-  // No OPEN alert -> create-or-update the row for this stage. The upsert keys on
-  // tour_date_id + alert_stage, so an existing (e.g. RESOLVED) row for the same stage
-  // is updated in place instead of triggering a duplicate-key error.
-  const up = await upsertAlertRow(supabase, {
-    tourDateId,
-    alertStage,
-    activeParticipants: participants,
-    minimumRequired: MIN_PARTICIPANTS_REQUIRED,
-    daysBeforeTour: days,
-    status: 'OPEN',
-    nowIso,
-  })
-
-  if (up.error) {
-    console.error('[v0] Failed to create/update alert:', up.error)
-    return { isNewStage: false }
-  }
-  return { isNewStage: true }
 }
 
 // Core single-tour-date sync. Operates only on the given tour date row.
@@ -1658,7 +1320,7 @@ export async function syncMinimumParticipantsForTourDate(
     const supabase = await createClient()
     const { data: td, error } = await supabase
       .from('tour_dates')
-      .select('id, tour_date, is_open, supplier_status, tour:tours(id, name)')
+      .select('id, tour_date, is_open, supplier_status, minimum_participants, tour:tours(id, name)')
       .eq('id', tourDateId)
       .single()
     if (error || !td) return { success: false, error: error?.message || 'Tour date not found' }
@@ -1683,7 +1345,7 @@ export async function syncVisibleMinimumParticipantIssues(
     const supabase = await createClient()
     const { data: dates, error } = await supabase
       .from('tour_dates')
-      .select('id, tour_date, is_open, supplier_status, tour:tours(id, name)')
+      .select('id, tour_date, is_open, supplier_status, minimum_participants, tour:tours(id, name)')
       .in('id', ids)
       .limit(500)
     if (error) return { success: false, synced: 0, error: error.message }
@@ -1720,7 +1382,7 @@ export async function resolveAlertForTourDate(
   // Ensure an alert row exists for this tour date.
   const { data: td } = await supabase
     .from('tour_dates')
-    .select('id, tour_date, is_open, supplier_status, tour:tours(id, name)')
+    .select('id, tour_date, is_open, supplier_status, minimum_participants, tour:tours(id, name)')
     .eq('id', tourDateId)
     .single()
   if (td) {
@@ -1750,7 +1412,7 @@ export async function resolveAlertForTourDate(
       tourDateId,
       alertStage: stage,
       activeParticipants: active,
-      minimumRequired: MIN_PARTICIPANTS_REQUIRED,
+      minimumRequired: td.minimum_participants,
       daysBeforeTour: days,
       status: 'OPEN',
     })

@@ -1,5 +1,6 @@
 import 'server-only'
 import { cache } from 'react'
+import { GUIDE_PERMISSIONS } from '@/lib/guide-permissions'
 import { createClient } from '@/lib/supabase/server'
 import { getServiceRoleClient } from '@/lib/supabase-admin'
 
@@ -20,5 +21,5 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   if (!profile?.active) return null
   return { id: profile.id, full_name: profile.full_name, email: profile.email, role: profile.role,
     active: profile.active, permissions: (profile.user_permissions ?? []).filter((p: { enabled: boolean }) => p.enabled)
-      .map((p: { permission_key: string }) => p.permission_key) }
+      .map((p: { permission_key: string }) => p.permission_key).filter((key: string) => profile.role !== 'supplier' || GUIDE_PERMISSIONS.has(key)) }
 })
