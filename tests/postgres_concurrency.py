@@ -42,6 +42,8 @@ def literal(value):
 
 
 actor, tour = str(uuid4()), str(uuid4())
+MULTI_GUIDE = os.environ.get('MULTI_GUIDE_TEST') == '1'
+guide, other = str(uuid4()), str(uuid4())
 if scalar("select count(*) from pg_tables where schemaname in ('public','auth')") != '0':
     raise SystemExit('Refusing a nonempty test database; nothing was changed.')
 for path in ('tests/schema-before.sql', 'database/prepare-remediation.sql', 'database/lockdown-remediation.sql'):
@@ -51,10 +53,20 @@ insert into user_permissions(user_id,permission_key,enabled) select '{actor}',ke
 unnest(array['booking_form_access','reservations_action_access','availability_calendar_manage_access']) key;
 insert into tours(id,name,max_capacity) values('{tour}','Concurrent test',8);""")
 
+if MULTI_GUIDE:
+    sql(f"insert into app_users(id,full_name,email,role) values('{guide}','Guide A','guide-a@example.test','supplier');")
+    sql((ROOT / 'database/multi-guide.sql').read_text(encoding='utf-8'))
+    sql(f"""insert into app_users(id,full_name,email,role) values('{other}','Guide B','guide-b@example.test','supplier');
+    insert into guide_tours(guide_user_id,tour_id) values('{other}','{tour}');
+    insert into user_permissions(user_id,permission_key,enabled) select id,'supplier_confirmation_action',true from app_users where role='supplier';""")
 
-def new_date(day):
+
+def new_date(day, guide_id=None):
     result = str(uuid4())
-    sql(f"insert into tour_dates(id,tour_id,tour_date,is_open,supplier_status) values('{result}','{tour}','2030-02-{day:02}',true,'YES')")
+    if MULTI_GUIDE:
+        sql(f"insert into tour_dates(id,tour_id,tour_date,is_open,supplier_status,guide_user_id,capacity,minimum_participants) values('{result}','{tour}','2030-02-{day:02}',true,'YES','{guide_id or guide}',8,4)")
+    else:
+        sql(f"insert into tour_dates(id,tour_id,tour_date,is_open,supplier_status) values('{result}','{tour}','2030-02-{day:02}',true,'YES')")
     return result
 
 
@@ -103,6 +115,24 @@ class ConcurrencyTests(unittest.TestCase):
         results = pair(*(f"set role service_role;select count(*) from booking_claim_email('{email}','{uuid4()}');" for _ in range(2)))
         self.assertTrue(all(r.returncode == 0 for r in results), [r.stderr for r in results])
         self.assertEqual(sorted(r.stdout.strip() for r in results), ['0', '1'])
+
+    @unittest.skipUnless(MULTI_GUIDE, 'multi-guide migration required')
+    def test_independent_guides_same_day(self):
+        a,b=new_date(5),new_date(5,other)
+        results=pair(transaction(booking(a,8)),transaction(booking(b,8)))
+        self.assertTrue(all(r.returncode == 0 for r in results),[r.stderr for r in results])
+        results=pair(transaction(f"select booking_set_guide_dates('{guide}','{tour}','{guide}',array['2030-02-05'::date],false,'CANCELLED')"),transaction(f"select booking_transition('{other}',(select id from reservations where tour_date_id='{b}'),'CONFIRMED')"))
+        self.assertTrue(all(r.returncode == 0 for r in results),[r.stderr for r in results])
+        self.assertEqual(scalar(f"select status from reservations where tour_date_id='{a}'"),'CANCELLED')
+        self.assertEqual(scalar(f"select status from reservations where tour_date_id='{b}'"),'CONFIRMED')
+
+    @unittest.skipUnless(MULTI_GUIDE, 'multi-guide migration required')
+    def test_guide_deactivation_and_opening(self):
+        fresh=str(uuid4())
+        sql(f"insert into app_users(id,full_name,email,role) values('{fresh}','Guide C','guide-c@example.test','supplier');insert into guide_tours(guide_user_id,tour_id) values('{fresh}','{tour}');insert into user_permissions(user_id,permission_key,enabled) values('{actor}','users_manage_access',true);")
+        results=pair(transaction(f"select booking_set_guide_dates('{actor}','{tour}','{fresh}',array['2030-02-06'::date],true,'YES')"),transaction(f"select booking_save_user('{actor}','{fresh}', jsonb_build_object('active',false))"))
+        self.assertEqual(sum(r.returncode==0 for r in results),1,[r.stderr for r in results])
+        self.assertEqual(scalar(f"select count(*) from tour_dates d join app_users u on u.id=d.guide_user_id where d.guide_user_id='{fresh}' and d.is_open and not u.active"),'0')
 
 
 if __name__ == '__main__':

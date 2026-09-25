@@ -4,20 +4,25 @@ import { readFile, readdir } from 'node:fs/promises'
 import vm from 'node:vm'
 import ts from 'typescript'
 
-async function load(relative, mocks={}, cache=new Map()) {
-  if(cache.has(relative))return cache.get(relative)
-  const text=await readFile(new URL('../'+relative,import.meta.url),'utf8')
-  const code=ts.transpileModule(text,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText
-  const module=new vm.SourceTextModule(code,{identifier:relative});cache.set(relative,module)
+async function load(relative, mocks={}) {
+  const modules=new Map()
+  function source(path) {
+    if(!modules.has(path)) modules.set(path,(async()=>{
+      const text=await readFile(new URL('../'+path,import.meta.url),'utf8')
+      const code=ts.transpileModule(text,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText
+      return new vm.SourceTextModule(code,{identifier:path})
+    })())
+    return modules.get(path)
+  }
+  const module=await source(relative)
   await module.link(async specifier=>{
-    if(specifier in mocks) {
-      const values=mocks[specifier]
+    if(specifier.startsWith('@/') && !(specifier in mocks)) return source(specifier.slice(2)+'.ts')
+    const key='external:'+specifier
+    if(!modules.has(key))modules.set(key,(async()=>{
+      const values=specifier in mocks?mocks[specifier]:specifier==='server-only'?{}:await import(specifier)
       return new vm.SyntheticModule(Object.keys(values),function(){for(const [key,value]of Object.entries(values))this.setExport(key,value)})
-    }
-    if(specifier==='server-only')return new vm.SyntheticModule([],()=>{})
-    if(specifier.startsWith('@/'))return load(specifier.slice(2)+'.ts',mocks,cache)
-    const values=await import(specifier)
-    return new vm.SyntheticModule(Object.keys(values),function(){for(const [key,value]of Object.entries(values))this.setExport(key,value)})
+    })())
+    return modules.get(key)
   })
   await module.evaluate();return module
 }
@@ -31,6 +36,7 @@ test('every protected public server action rejects an unauthenticated call befor
     '@/lib/email-log':{deliverReservationEmails:async()=>({}),processEmailOutbox:async()=>({}),createEmailLog:async()=>({})},
   }
   const paths=(await readdir(new URL('../app/',import.meta.url),{recursive:true})).filter(p=>p.endsWith('actions.ts')&&!p.includes('login')).map(p=>'app/'+p.replaceAll('\\','/'))
+  paths.push('app/actions/guides.ts')
   let checked=0
   for(const path of paths) {
     const module=await load(path,mocks)
@@ -52,6 +58,28 @@ test('permission gates reject inactive users and respect individual keys without
   await assert.rejects(module.namespace.requirePermission('users_manage_access'),/permission/)
   actor.active=false
   await assert.rejects(module.namespace.requirePermission('booking_form_access'),/permission/)
+})
+
+test('guide permissions cannot expose staff management even if a key was mistakenly granted',async()=>{
+  const actor={id:'guide-a',active:true,role:'supplier',permissions:['supplier_confirmation_view','users_manage_access','booking_form_access']}
+  const module=await load('lib/authorization.ts',{'@/lib/auth':{getCurrentUser:async()=>actor}})
+  assert.equal((await module.namespace.requirePermission('supplier_confirmation_view')).id,actor.id)
+  await assert.rejects(module.namespace.requirePermission('users_manage_access'),/permission/)
+  await assert.rejects(module.namespace.requirePermission('booking_form_access'),/permission/)
+})
+
+test('guide reservation queries always carry the signed-in guide scope',async()=>{
+  const actor={id:'guide-a',active:true,role:'supplier',permissions:['supplier_confirmation_view']}
+  const filters=[]
+  const query={select(){return this},match(value){filters.push(value);return this},eq(){return this},order(){return this},range(){return this},then(resolve){resolve({data:[],error:null})}}
+  const module=await load('app/supplier/confirm/actions.ts',{
+    '@/lib/auth':{getCurrentUser:async()=>actor},
+    '@/lib/supabase-admin':{getServiceRoleClient:()=>({from:()=>query})},
+    '@/lib/email-log':{deliverReservationEmails:async()=>({}),processEmailOutbox:async()=>({})},
+    'next/cache':{revalidatePath:()=>{}},'next/server':{after:()=>{}},
+  })
+  await module.namespace.fetchReservationsByStatus('CONFIRMED')
+  assert.deepEqual(filters,[{'tour_dates.guide_user_id':'guide-a'}])
 })
 
 test('email HTML escapes passenger fields and preserves plain text and cancellation reason',async()=>{
