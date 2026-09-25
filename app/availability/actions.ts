@@ -1,10 +1,13 @@
 'use server'
 
 import { getServiceRoleClient as createClient } from '@/lib/supabase-admin'
+import { toursForActor } from '@/lib/guide-access'
 import { requirePermission, safeSearch } from '@/lib/authorization'
 
 export interface TourAvailability {
   tour_id: string
+  guide_name: string
+  guide_user_id: string
   tour_name: string
   tour_short_name: string
   tour_date_id: string
@@ -19,15 +22,11 @@ export interface TourAvailability {
 
 // Fetch all active tours for the filter dropdown
 export async function fetchToursForFilter() {
-  await requirePermission("availability_view_access")
+  const actor = await requirePermission("availability_view_access")
 
   const supabase = await createClient()
   
-  const { data, error } = await supabase
-    .from('tours')
-    .select('id, name')
-    .eq('active', true)
-    .order('name')
+  const {data,error} = await toursForActor(actor,true)
 
   return {
     tours: data || [],
@@ -73,9 +72,9 @@ function getAvailabilityStatus(
 export async function fetchAvailabilityForCalendar(
   year: number, 
   month: number, 
-  tourId?: string // optional filter by tour
+  tourId?: string, guideId?: string
 ) {
-  await requirePermission("availability_view_access")
+  const actor = await requirePermission("availability_view_access")
 
   const supabase = await createClient()
   
@@ -100,7 +99,9 @@ export async function fetchAvailabilityForCalendar(
   // Build query for tour_dates
   let query = supabase
     .from('tour_dates')
-    .select('id, tour_id, tour_date, is_open, supplier_status')
+    .select('id, tour_id, tour_date, is_open, supplier_status, capacity, guide_user_id, guide:app_users!tour_dates_guide_user_id_fkey!inner(full_name,active,role)')
+    .match(actor.role==='supplier'?{guide_user_id:actor.id}:{})
+    .match(guideId?{guide_user_id:guideId}:{})
     .gte('tour_date', startDate)
     .lte('tour_date', endDate)
     .order('tour_date', { ascending: true })
@@ -129,18 +130,20 @@ export async function fetchAvailabilityForCalendar(
     if (!tourInfo) continue
 
     const activeParticipants = participantsByDate.get(td.id) || 0
-    const seatsLeft = tourInfo.max_capacity - activeParticipants
-    const availabilityStatus = getAvailabilityStatus(td.is_open, td.supplier_status, seatsLeft)
+    const seatsLeft = td.capacity - activeParticipants
+    const availabilityStatus = getAvailabilityStatus(td.is_open && (Array.isArray(td.guide)?td.guide[0]:td.guide)?.active === true, td.supplier_status, seatsLeft)
 
     availability.push({
       tour_id: td.tour_id,
       tour_name: tourInfo.name,
+      guide_user_id:td.guide_user_id,
+      guide_name:(Array.isArray(td.guide)?td.guide[0]:td.guide)?.full_name ?? 'Unassigned',
       tour_short_name: getShortTourName(tourInfo.name),
       tour_date_id: td.id,
       tour_date: td.tour_date,
       is_open: td.is_open,
       supplier_status: td.supplier_status,
-      max_capacity: tourInfo.max_capacity,
+      max_capacity: td.capacity,
       active_participants: activeParticipants,
       seats_left: seatsLeft,
       availability_status: availabilityStatus
@@ -151,8 +154,8 @@ export async function fetchAvailabilityForCalendar(
 }
 
 // Fetch upcoming availability list (next 60 days)
-export async function fetchUpcomingAvailability(tourId?: string) {
-  await requirePermission("availability_view_access")
+export async function fetchUpcomingAvailability(tourId?: string, guideId?: string) {
+  const actor = await requirePermission("availability_view_access")
 
   const supabase = await createClient()
   
@@ -177,7 +180,9 @@ export async function fetchUpcomingAvailability(tourId?: string) {
   // Build query for tour_dates - only fetch open dates for the list
   let query = supabase
     .from('tour_dates')
-    .select('id, tour_id, tour_date, is_open, supplier_status')
+    .select('id, tour_id, tour_date, is_open, supplier_status, capacity, guide_user_id, guide:app_users!tour_dates_guide_user_id_fkey!inner(full_name,active,role)')
+    .match(actor.role==='supplier'?{guide_user_id:actor.id}:{})
+    .match(guideId?{guide_user_id:guideId}:{})
     .gte('tour_date', startDate)
     .lte('tour_date', endDate)
     .order('tour_date', { ascending: true })
@@ -206,18 +211,20 @@ export async function fetchUpcomingAvailability(tourId?: string) {
     if (!tourInfo) continue
 
     const activeParticipants = participantsByDate.get(td.id) || 0
-    const seatsLeft = tourInfo.max_capacity - activeParticipants
-    const availabilityStatus = getAvailabilityStatus(td.is_open, td.supplier_status, seatsLeft)
+    const seatsLeft = td.capacity - activeParticipants
+    const availabilityStatus = getAvailabilityStatus(td.is_open && (Array.isArray(td.guide)?td.guide[0]:td.guide)?.active === true, td.supplier_status, seatsLeft)
 
     upcoming.push({
       tour_id: td.tour_id,
       tour_name: tourInfo.name,
+      guide_user_id:td.guide_user_id,
+      guide_name:(Array.isArray(td.guide)?td.guide[0]:td.guide)?.full_name ?? 'Unassigned',
       tour_short_name: getShortTourName(tourInfo.name),
       tour_date_id: td.id,
       tour_date: td.tour_date,
       is_open: td.is_open,
       supplier_status: td.supplier_status,
-      max_capacity: tourInfo.max_capacity,
+      max_capacity: td.capacity,
       active_participants: activeParticipants,
       seats_left: seatsLeft,
       availability_status: availabilityStatus

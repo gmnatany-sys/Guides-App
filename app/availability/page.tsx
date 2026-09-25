@@ -1,5 +1,6 @@
 'use client'
 
+import { GuidePicker } from '@/components/guide-picker'
 import { useEffect, useState, useTransition } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -39,6 +40,7 @@ function getStatusBadge(status: TourAvailability['availability_status']) {
 export default function AvailabilityPage() {
   const [tours, setTours] = useState<Tour[]>([])
   const [selectedTourId, setSelectedTourId] = useState('all')
+  const [selectedGuideId,setSelectedGuideId]=useState('')
   const [calendarData, setCalendarData] = useState<TourAvailability[]>([])
   const [upcomingData, setUpcomingData] = useState<TourAvailability[]>([])
   const [isLoadingCalendar, setIsLoadingCalendar] = useState(false)
@@ -76,7 +78,7 @@ export default function AvailabilityPage() {
         const result = await fetchAvailabilityForCalendar(
           currentMonth.year, 
           currentMonth.month, 
-          selectedTourId === 'all' ? undefined : selectedTourId
+          selectedTourId === 'all' ? undefined : selectedTourId, selectedGuideId || undefined
         )
         if (ignore) return
         if (result.error) throw new Error(result.error)
@@ -92,7 +94,7 @@ export default function AvailabilityPage() {
     }
     loadCalendarData()
     return () => { ignore = true }
-  }, [currentMonth, selectedTourId])
+  }, [currentMonth, selectedTourId, selectedGuideId])
 
   // Load upcoming data when tour filter changes
   useEffect(() => {
@@ -101,7 +103,7 @@ export default function AvailabilityPage() {
       setIsLoadingUpcoming(true)
       try {
         const result = await fetchUpcomingAvailability(
-          selectedTourId === 'all' ? undefined : selectedTourId
+          selectedTourId === 'all' ? undefined : selectedTourId, selectedGuideId || undefined
         )
         if (ignore) return
         if (result.error) throw new Error(result.error)
@@ -116,7 +118,7 @@ export default function AvailabilityPage() {
     }
     loadUpcomingData()
     return () => { ignore = true }
-  }, [selectedTourId])
+  }, [selectedTourId,selectedGuideId])
 
   // Calendar navigation
   function goToPreviousMonth() {
@@ -197,7 +199,7 @@ export default function AvailabilityPage() {
             <CardTitle className="text-base">Filter by Tour</CardTitle>
           </CardHeader>
           <CardContent>
-            <Select value={selectedTourId} onValueChange={value => { if (value !== null) setSelectedTourId(value) }}>
+            <Select value={selectedTourId} onValueChange={value => { if (value !== null) {setSelectedGuideId('');setSelectedTourId(value)} }}>
               <SelectTrigger className="w-full sm:w-80">
                 <SelectValue placeholder="Select a tour" />
               </SelectTrigger>
@@ -208,6 +210,7 @@ export default function AvailabilityPage() {
                 ))}
               </SelectContent>
             </Select>
+            <div className="mt-4 max-w-xs"><GuidePicker tourId={selectedTourId==='all'?undefined:selectedTourId} allowAll value={selectedGuideId} onChange={setSelectedGuideId}/></div>
           </CardContent>
         </Card>
 
@@ -276,7 +279,7 @@ export default function AvailabilityPage() {
                                 'bg-gray-50 border border-gray-200'
                               }`}
                             >
-                              <div className="font-semibold truncate">{avail.tour_short_name}</div>
+                              <div className="font-semibold truncate">{avail.tour_short_name}<span className="block font-normal">{avail.guide_name}</span></div>
                               {avail.availability_status === 'FULL' || avail.availability_status === 'CANCELLED' ? (
                                 <div className={`text-[9px] sm:text-[10px] ${
                                   avail.availability_status === 'CANCELLED' ? 'text-red-600' : 'text-red-500'
@@ -334,6 +337,7 @@ export default function AvailabilityPage() {
         </Card>
 
         {/* Upcoming Availability List */}
+        
         <Card>
           <CardHeader>
             <CardTitle>Upcoming Availability</CardTitle>
@@ -374,7 +378,7 @@ export default function AvailabilityPage() {
                             year: 'numeric'
                           })}
                         </td>
-                        <td className="py-3 px-2">{item.tour_name}</td>
+                        <td className="py-3 px-2">{item.tour_name}<span className="block text-xs text-muted-foreground">{item.guide_name}</span></td>
                         <td className="py-3 px-2 text-center">
                           {item.is_open ? (
                             <Badge variant="outline" className="bg-green-50 text-green-700 border-green-300">Yes</Badge>
